@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Memos · EduMemo</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['staff']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+
+  let searchTerm = '';
+  const content = App.renderShell({ role: 'staff', searchPlaceholder: 'Search your memos…', onSearch: (val) => { searchTerm = val; state.page = 1; load(); } });
+  App.initUserChrome(user);
+
+  const params = new URLSearchParams(window.location.search);
+  const state = { filter: params.get('tab') || (user.staffType === 'non_academic' ? 'received' : 'sent'), page: 1 };
+  if (user.staffType === 'non_academic' && state.filter !== 'received') state.filter = 'received';
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>My Memos</h1>${user.staffType === 'academic' ? '<a href="/staff/create-memo.html" class="btn btn-primary">Create Memo</a>' : ''}</div>
+    <div class="tabs" id="tabs">
+      <button class="tab-btn" data-filter="received">Received</button>
+      ${user.staffType === 'academic' ? '<button class="tab-btn" data-filter="sent">Sent</button><button class="tab-btn" data-filter="drafts">Drafts</button><button class="tab-btn" data-filter="archived">Archived</button>' : ''}
+    </div>
+    <div id="list-region"></div>
+  `;
+  document.querySelector(`[data-filter="${state.filter}"]`).classList.add('active');
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    if (!e.target.matches('.tab-btn')) return;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    state.filter = e.target.dataset.filter;
+    state.page = 1;
+    history.replaceState(null, '', `/staff/memos.html?tab=${state.filter}`);
+    load();
+  });
+
+  const emptyMessages = {
+    received: { emoji: '📥', title: 'No received memos', body: 'Memos addressed to you will appear here.' },
+    sent: { emoji: '📤', title: 'No sent memos', body: 'Memos you publish will appear here.' },
+    drafts: { emoji: '📝', title: 'No drafts', body: 'Start a new memo and save it as a draft to continue later.' },
+    archived: { emoji: '🗄️', title: 'No archived memos', body: 'Archived memos will appear here.' },
+  };
+
+  async function load() {
+    const listRegion = document.getElementById('list-region');
+    listRegion.innerHTML = '<div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div>';
+    try {
+      const p = new URLSearchParams({ filter: state.filter, page: state.page });
+      if (searchTerm) p.set('search', searchTerm);
+      const { memos } = await Api.get(`/api/memos?${p}`);
+
+      if (memos.length === 0) {
+        const m = emptyMessages[state.filter];
+        listRegion.innerHTML = `<div class="empty-state"><div class="emoji">${m.emoji}</div><h3>${m.title}</h3><p>${m.body}</p></div>`;
+        return;
+      }
+
+      listRegion.innerHTML = `<div class="list">${memos.map(m => `
+        <div class="list-row" data-id="${m.id}" data-status="${m.status}">
+          <div class="row-main">
+            <div class="row-title">${App.escapeHtml(m.title)}</div>
+            <div class="row-meta">
+              <span class="badge ${m.status === 'published' ? 'badge-green' : m.status === 'archived' ? 'badge-grey' : 'badge-amber'}">${m.status}</span>
+              ${m.category_name ? `<span>${App.escapeHtml(m.category_name)}</span>` : ''}
+              ${m.has_attachment ? '<span>📎</span>' : ''}
+              ${m.status === 'published' ? `<span>${m.read_count}/${m.estimated_recipient_count} read</span>` : ''}
+            </div>
+          </div>
+          <div class="row-side">
+            ${App.timeAgo(m.published_at || m.created_at)}<br>
+            <div style="margin-top:6px; display:flex; gap:8px; justify-content:flex-end;">
+              ${m.status === 'draft' ? `<button class="btn btn-sm btn-secondary" data-action="edit">Edit</button>` : `<button class="btn btn-sm btn-secondary" data-action="view">View</button>`}
+              ${m.status === 'published' ? `<button class="btn btn-sm btn-secondary" data-action="archive">Archive</button>` : ''}
+              ${m.status !== 'draft' ? `<button class="btn btn-sm btn-secondary" data-action="resend">Resend</button>` : ''}
+              ${m.status !== 'draft' ? `<button class="btn btn-sm btn-danger" data-action="delete">Delete</button>` : ''}
+            </div>
+          </div>
+        </div>
+      `).join('')}</div>`;
+
+      listRegion.querySelectorAll('.list-row').forEach(row => {
+        const id = row.dataset.id;
+        row.querySelector('[data-action="edit"]')?.addEventListener('click', (e) => { e.stopPropagation(); window.location.href = `/staff/create-memo.html?id=${id}`; });
+        row.querySelector('[data-action="view"]')?.addEventListener('click', (e) => { e.stopPropagation(); window.location.href = `/memo.html?id=${id}`; });
+        row.querySelector('[data-action="archive"]')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = await App.confirmModal({ title: 'Archive this memo?', body: 'It will move out of active memos but remain in the record.', confirmLabel: 'Archive' });
+          if (!ok) return;
+          try { await Api.post(`/api/memos/${id}/archive`); App.toast('Memo archived.', 'success'); load(); } catch (err) { App.showError(err); }
+        });
+        row.querySelector('[data-action="resend"]')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = await App.confirmModal({
+            title: 'RESEND THIS MEMO?',
+            body: 'Every recipient will receive the memo email and push notification again (in-app notifications are not duplicated).',
+            confirmLabel: 'Resend',
+          });
+          if (!ok) return;
+          try { await Api.post(`/api/memos/${id}/resend`); App.toast('Resend started — notifications are going out.', 'success'); }
+          catch (err) { App.showError(err); }
+        });
+        row.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = await App.confirmModal({
+            title: 'DELETE THIS MEMO PERMANENTLY?',
+            body: 'It will be removed from every recipient\'s inbox and notification history, along with any attachments. This cannot be undone.',
+            confirmLabel: 'Delete Permanently',
+            danger: true,
+          });
+          if (!ok) return;
+          try { await Api.del(`/api/memos/${id}`); App.toast('Memo permanently deleted.', 'success'); load(); }
+          catch (err) { App.showError(err); }
+        });
+        row.addEventListener('click', () => {
+          window.location.href = row.dataset.status === 'draft' ? `/staff/create-memo.html?id=${id}` : `/memo.html?id=${id}`;
+        });
+      });
+    } catch (err) {
+      listRegion.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

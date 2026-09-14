@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memo Records · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+
+  let searchTerm = '';
+  const content = App.renderShell({ role: 'administrator', searchPlaceholder: 'Search memo title or body…', onSearch: (val) => { searchTerm = val; state.page = 1; load(); } });
+  App.initUserChrome(user);
+
+  const state = { page: 1, senderType: '', status: '', category: '' };
+  const categories = await Api.get('/api/meta/categories');
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>Memo Records</h1><span class="sub">Full history of every memo published by staff and administrators.</span></div>
+    <div class="panel">
+      <div class="form-row three">
+        <div class="field" style="margin-bottom:0;"><label>Sender Type</label>
+          <select id="f-senderType"><option value="">All</option><option value="staff">Staff</option><option value="administrator">Administrator</option></select>
+        </div>
+        <div class="field" style="margin-bottom:0;"><label>Status</label>
+          <select id="f-status"><option value="">All</option><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select>
+        </div>
+        <div class="field" style="margin-bottom:0;"><label>Category</label>
+          <select id="f-category"><option value="">All</option>${categories.map(c => `<option value="${c.id}">${App.escapeHtml(c.name)}</option>`).join('')}</select>
+        </div>
+      </div>
+    </div>
+    <div id="table-region"></div>
+    <div class="pagination" id="pagination"></div>
+  `;
+
+  ['f-senderType', 'f-status', 'f-category'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      state.senderType = document.getElementById('f-senderType').value;
+      state.status = document.getElementById('f-status').value;
+      state.category = document.getElementById('f-category').value;
+      state.page = 1;
+      load();
+    });
+  });
+
+  async function load() {
+    const tableRegion = document.getElementById('table-region');
+    tableRegion.innerHTML = '<div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div>';
+    try {
+      const p = new URLSearchParams({ page: state.page });
+      if (searchTerm) p.set('search', searchTerm);
+      if (state.senderType) p.set('senderType', state.senderType);
+      if (state.status) p.set('status', state.status);
+      if (state.category) p.set('category', state.category);
+      const { memos, total, pageSize } = await Api.get(`/api/memos?${p}`);
+
+      if (memos.length === 0) {
+        tableRegion.innerHTML = `<div class="empty-state"><div class="emoji">🔎</div><h3>No matching records</h3><p>Try adjusting your filters.</p></div>`;
+        document.getElementById('pagination').innerHTML = '';
+        return;
+      }
+
+      tableRegion.innerHTML = `
+        <div class="panel" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Title</th><th>Sender</th><th>Staff ID</th><th>Type</th><th>Category</th>
+            <th>Date</th><th>Recipients</th><th>Attachment</th><th>Status</th><th>Read</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${memos.map(m => `
+              <tr style="cursor:pointer;" data-id="${m.id}">
+                <td>${App.escapeHtml(m.title)}</td>
+                <td>${App.escapeHtml(m.sender_name)}</td>
+                <td>${App.escapeHtml(m.staff_id || '—')}</td>
+                <td><span class="badge badge-grey">${m.sender_role}</span></td>
+                <td>${App.escapeHtml(m.category_name || '—')}</td>
+                <td>${App.formatDate(m.published_at || m.created_at)}</td>
+                <td>${m.estimated_recipient_count}</td>
+                <td>${m.has_attachment ? '📎' : '—'}</td>
+                <td><span class="badge ${m.status === 'published' ? 'badge-green' : m.status === 'archived' ? 'badge-grey' : 'badge-amber'}">${m.status}</span></td>
+                <td>${m.status === 'published' ? `${m.read_count}/${m.estimated_recipient_count}` : '—'}</td>
+                <td>${m.status !== 'draft' ? '<button class="btn btn-sm btn-secondary" data-action="resend">Resend</button> ' : ''}<button class="btn btn-sm btn-danger" data-action="delete">Delete</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        </div>`;
+
+      tableRegion.querySelectorAll('tr[data-id]').forEach(row => {
+        row.addEventListener('click', () => window.location.href = `/memo.html?id=${row.dataset.id}`);
+        row.querySelector('[data-action="resend"]')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = await App.confirmModal({
+            title: 'RESEND THIS MEMO?',
+            body: 'Every recipient will receive the memo email and push notification again (in-app notifications are not duplicated).',
+            confirmLabel: 'Resend',
+          });
+          if (!ok) return;
+          try { await Api.post(`/api/memos/${row.dataset.id}/resend`); App.toast('Resend started — notifications are going out.', 'success'); }
+          catch (err) { App.showError(err); }
+        });
+        row.querySelector('[data-action="delete"]')?.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const ok = await App.confirmModal({
+            title: 'DELETE THIS MEMO PERMANENTLY?',
+            body: 'It will be removed from every recipient\'s inbox and notification history, along with any attachments. This cannot be undone.',
+            confirmLabel: 'Delete Permanently',
+            danger: true,
+          });
+          if (!ok) return;
+          try { await Api.del(`/api/memos/${row.dataset.id}`); App.toast('Memo permanently deleted.', 'success'); load(); }
+          catch (err) { App.showError(err); }
+        });
+      });
+
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const pagination = document.getElementById('pagination');
+      if (totalPages > 1) {
+        let buttons = '';
+        for (let p2 = 1; p2 <= totalPages; p2++) buttons += `<button class="btn btn-sm ${p2 === state.page ? 'btn-primary' : 'btn-secondary'}" data-page="${p2}">${p2}</button>`;
+        pagination.innerHTML = buttons;
+        pagination.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.page = Number(b.dataset.page); load(); }));
+      } else { pagination.innerHTML = ''; }
+    } catch (err) {
+      tableRegion.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memo · EduMemo</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['student', 'staff', 'administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+
+  const content = App.renderShell({ role: user.role, showSearch: false });
+  App.initUserChrome(user);
+
+  const params = new URLSearchParams(window.location.search);
+  const memoId = params.get('id');
+
+  const backHref = { student: '/student/dashboard.html', staff: '/staff/memos.html?tab=sent', administrator: '/admin/memo-records.html' }[user.role];
+
+  content.innerHTML = `
+    <a href="${backHref}" class="muted" style="font-size:13px; display:inline-block; margin-bottom:14px;">&larr; Back</a>
+    <div id="memo-region"><div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div></div>
+  `;
+
+  const targetLabel = (rule) => {
+    if (!rule) return 'N/A';
+    const parts = [];
+    if (rule.faculty_name) parts.push(`Faculty: ${rule.faculty_name}`);
+    if (rule.department_name) parts.push(`Dept: ${rule.department_name}`);
+    if (rule.programme_name) parts.push(`Programme: ${rule.programme_name}`);
+    if (rule.level_name) parts.push(rule.level_name);
+    if (rule.study_mode_name) parts.push(rule.study_mode_name);
+    if (rule.course_code) parts.push(`Course: ${rule.course_code}`);
+    return parts.length ? parts.join(' · ') : 'N/A';
+  };
+
+  try {
+    const { memo, attachment, attachments = [], targetRule } = await Api.get(`/api/memos/${memoId}`);
+    const region = document.getElementById('memo-region');
+
+    const targetText = memo.is_institution_wide ? 'Entire Institution' : targetLabel(targetRule);
+
+    region.innerHTML = `
+      <div class="memo-doc">
+        <div class="memo-doc-header">
+          <div class="cat">
+            ${memo.category_name ? `<span class="badge badge-grey">${App.escapeHtml(memo.category_name)}</span>` : ''}
+            ${memo.is_institution_wide ? `<span class="badge badge-green">Institution-wide</span>` : ''}
+            ${memo.status === 'archived' ? `<span class="badge badge-amber">Archived</span>` : ''}
+          </div>
+          <h1>${App.escapeHtml(memo.title)}</h1>
+          <div class="memo-doc-meta">
+            <span><strong>From:</strong> ${App.escapeHtml(memo.sender_name)}</span>
+            <span><strong>Date:</strong> ${App.formatDate(memo.published_at || memo.created_at)}</span>
+            <span><strong>Audience:</strong> ${App.escapeHtml(targetText)}</span>
+          </div>
+        </div>
+        <div class="memo-doc-body">${App.escapeHtml(memo.body)}</div>
+        ${attachment ? `
+        <div class="memo-doc-attachment">
+          <div class="label">Attachment</div>
+          <div class="attachment-row">
+            <span class="icon">📄</span>
+            <span>${App.escapeHtml(attachment.original_filename)} <span class="muted">(${App.fileSize(attachment.size_bytes)})</span></span>
+            <span class="actions">
+              <a href="/api/memos/${memo.id}/attachment" target="_blank" rel="noopener">View</a>
+              <a href="/api/memos/${memo.id}/attachment" download>Download</a>
+            </span>
+          </div>
+        </div>` : ''}
+        ${attachments.slice(1).map(file => `<div class="memo-doc-attachment"><div class="attachment-row"><span>${App.escapeHtml(file.original_filename)} <span class="muted">(${App.fileSize(file.size_bytes)})</span></span><span class="actions"><a href="/api/memos/${memo.id}/attachments/${file.id}" target="_blank" rel="noopener">View</a><a href="/api/memos/${memo.id}/attachments/${file.id}" download>Download</a></span></div></div>`).join('')}
+      </div>
+    `;
+  } catch (err) {
+    document.getElementById('memo-region').innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+  }
+})();
+</script>
+</body>
+</html>

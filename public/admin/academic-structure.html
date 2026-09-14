@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Academic Structure · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'administrator', showSearch: false });
+  App.initUserChrome(user);
+
+  // Config per entity: endpoint, columns to show, and add-form fields.
+  const ENTITIES = {
+    faculties: { label: 'Faculties / Schools', endpoint: 'faculties', columns: [{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }],
+      fields: [{ key: 'name', label: 'Name', required: true }, { key: 'code', label: 'Code' }] },
+    departments: { label: 'Departments', endpoint: 'departments', columns: [{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }, { key: 'faculty_id', label: 'Faculty', lookup: 'faculties' }],
+      fields: [{ key: 'name', label: 'Name', required: true }, { key: 'code', label: 'Code' }, { key: 'faculty_id', label: 'Faculty', type: 'select', lookup: 'faculties', required: true }] },
+    programmes: { label: 'Programmes', endpoint: 'programmes', columns: [{ key: 'name', label: 'Name' }, { key: 'code', label: 'Code' }, { key: 'department_id', label: 'Department', lookup: 'departments' }],
+      fields: [{ key: 'name', label: 'Name', required: true }, { key: 'code', label: 'Code' }, { key: 'department_id', label: 'Department', type: 'select', lookup: 'departments', required: true }] },
+    levels: { label: 'Levels', endpoint: 'levels', columns: [{ key: 'name', label: 'Name' }, { key: 'sort_order', label: 'Order' }],
+      fields: [{ key: 'name', label: 'Name', required: true }, { key: 'sort_order', label: 'Sort order', type: 'number' }] },
+    'study-modes': { label: 'Study Modes', endpoint: 'study-modes', columns: [{ key: 'name', label: 'Name' }],
+      fields: [{ key: 'name', label: 'Name', required: true }] },
+    courses: { label: 'Courses', endpoint: 'courses', columns: [{ key: 'code', label: 'Code' }, { key: 'title', label: 'Title' }, { key: 'department_id', label: 'Department', lookup: 'departments' }, { key: 'level_id', label: 'Level', lookup: 'levels' }],
+      fields: [{ key: 'code', label: 'Course Code', required: true }, { key: 'title', label: 'Title', required: true }, { key: 'department_id', label: 'Department', type: 'select', lookup: 'departments' }, { key: 'level_id', label: 'Level', type: 'select', lookup: 'levels' }] },
+    categories: { label: 'Memo Categories', endpoint: 'categories', columns: [{ key: 'name', label: 'Name' }],
+      fields: [{ key: 'name', label: 'Name', required: true }] },
+  };
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>Academic Structure</h1></div>
+    <div class="tabs" id="tabs">${Object.keys(ENTITIES).map(k => `<button class="tab-btn" data-tab="${k}">${ENTITIES[k].label}</button>`).join('')}</div>
+    <div id="body-region"></div>
+  `;
+
+  const lookupCache = {};
+  async function getLookup(endpoint) {
+    if (lookupCache[endpoint]) return lookupCache[endpoint];
+    const data = await Api.get(`/api/meta/${endpoint}`);
+    lookupCache[endpoint] = data;
+    return data;
+  }
+
+  let currentTab = Object.keys(ENTITIES)[0];
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    if (!e.target.matches('.tab-btn')) return;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    currentTab = e.target.dataset.tab;
+    renderTab();
+  });
+  document.querySelector('.tab-btn').classList.add('active');
+
+  async function renderTab() {
+    delete lookupCache[ENTITIES[currentTab].endpoint]; // refresh in case a parent list changed
+    const config = ENTITIES[currentTab];
+    const region = document.getElementById('body-region');
+    region.innerHTML = `
+      <div class="panel">
+        <div class="panel-header"><h2>Add ${config.label.replace(/s$/, '')}</h2></div>
+        <form id="add-form" class="form-row three"></form>
+      </div>
+      <div id="list-panel"><div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div></div>
+    `;
+
+    const addForm = document.getElementById('add-form');
+    for (const field of config.fields) {
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      wrap.style.marginBottom = '0';
+      const label = document.createElement('label');
+      label.textContent = field.label;
+      wrap.appendChild(label);
+      let input;
+      if (field.type === 'select') {
+        input = document.createElement('select');
+        input.innerHTML = '<option value="">Select…</option>';
+        const opts = await getLookup(field.lookup);
+        input.innerHTML += opts.map(o => `<option value="${o.id}">${App.escapeHtml(o.name || o.code)}</option>`).join('');
+      } else {
+        input = document.createElement('input');
+        input.type = field.type === 'number' ? 'number' : 'text';
+      }
+      input.id = `f-${field.key}`;
+      input.required = !!field.required;
+      wrap.appendChild(input);
+      addForm.appendChild(wrap);
+    }
+    const btnWrap = document.createElement('div');
+    btnWrap.className = 'field';
+    btnWrap.style.marginBottom = '0';
+    btnWrap.style.display = 'flex';
+    btnWrap.style.alignItems = 'flex-end';
+    btnWrap.innerHTML = `<button type="submit" class="btn btn-primary">Add</button>`;
+    addForm.appendChild(btnWrap);
+
+    addForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = {};
+      for (const field of config.fields) payload[field.key] = document.getElementById(`f-${field.key}`).value;
+      try {
+        await Api.post(`/api/meta/${config.endpoint}`, payload);
+        App.toast('Added successfully.', 'success');
+        renderTab();
+      } catch (err) { App.showError(err); }
+    });
+
+    await loadList();
+  }
+
+  async function loadList() {
+    const config = ENTITIES[currentTab];
+    const listPanel = document.getElementById('list-panel');
+    try {
+      const rows = await Api.get(`/api/meta/${config.endpoint}`);
+      const lookupResolved = {};
+      for (const col of config.columns) {
+        if (col.lookup) lookupResolved[col.key] = await getLookup(col.lookup);
+      }
+      const resolve = (col, row) => {
+        if (!col.lookup) return App.escapeHtml(row[col.key] ?? '—');
+        const match = (lookupResolved[col.key] || []).find(o => o.id === row[col.key]);
+        return App.escapeHtml(match ? (match.name || match.code) : '—');
+      };
+
+      if (rows.length === 0) {
+        listPanel.innerHTML = `<div class="empty-state"><div class="emoji">📂</div><h3>Nothing here yet</h3><p>Add the first ${config.label.toLowerCase()} using the form above.</p></div>`;
+        return;
+      }
+
+      listPanel.innerHTML = `
+        <div class="panel" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>${config.columns.map(c => `<th>${c.label}</th>`).join('')}<th></th></tr></thead>
+          <tbody>${rows.map(r => `
+            <tr>${config.columns.map(c => `<td>${resolve(c, r)}</td>`).join('')}
+              <td style="text-align:right;"><button class="btn btn-sm btn-danger" data-id="${r.id}">Delete</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>`;
+
+      listPanel.querySelectorAll('button[data-id]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const ok = await App.confirmModal({ title: 'Delete this record?', body: 'This cannot be undone if nothing else depends on it.', confirmLabel: 'Delete', danger: true });
+          if (!ok) return;
+          try {
+            await Api.del(`/api/meta/${config.endpoint}/${btn.dataset.id}`);
+            App.toast('Deleted.', 'success');
+            loadList();
+          } catch (err) { App.showError(err); }
+        });
+      });
+    } catch (err) {
+      listPanel.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  renderTab();
+})();
+</script>
+</body>
+</html>

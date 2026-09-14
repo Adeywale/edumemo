@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Users · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+
+  let searchTerm = '';
+  const content = App.renderShell({ role: 'administrator', searchPlaceholder: 'Search by name, email, matric/staff number…', onSearch: (val) => { searchTerm = val; load(); } });
+  App.initUserChrome(user);
+
+  const params = new URLSearchParams(window.location.search);
+  const requestedTab = params.get('tab');
+  const state = { tab: ['students', 'academic', 'non_academic', 'approvals'].includes(requestedTab) ? requestedTab : 'students' };
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>Users</h1></div>
+    <div class="tabs" id="tabs">
+      <button class="tab-btn" data-tab="students">Students</button>
+      <button class="tab-btn" data-tab="academic">Teaching Staff</button>
+      <button class="tab-btn" data-tab="non_academic">Non-Teaching Staff</button>
+      <button class="tab-btn" data-tab="approvals">Staff Approvals</button>
+    </div>
+    <div id="table-region"></div>
+  `;
+  document.querySelector(`[data-tab="${state.tab}"]`).classList.add('active');
+
+  document.getElementById('tabs').addEventListener('click', (e) => {
+    if (!e.target.matches('.tab-btn')) return;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    e.target.classList.add('active');
+    state.tab = e.target.dataset.tab;
+    history.replaceState(null, '', `/admin/users.html?tab=${state.tab}`);
+    load();
+  });
+
+  function statusBadge(status) {
+    const map = { active: 'badge-green', pending_approval: 'badge-amber', suspended: 'badge-red', disabled: 'badge-grey' };
+    const label = { active: 'Active', pending_approval: 'Pending Approval', suspended: 'Suspended', disabled: 'Disabled' };
+    return `<span class="badge ${map[status] || 'badge-grey'}">${label[status] || status}</span>`;
+  }
+
+  async function openDetails(id) {
+    try {
+      const u = await Api.get(`/api/admin/users/${id}`);
+      const isStudent = u.role === 'student';
+      const fullName = [u.first_name, u.other_name, u.last_name].filter(Boolean).join(' ');
+      const statusLabels = { active: 'Active', pending_approval: 'Pending Approval', suspended: 'Suspended', disabled: 'Disabled' };
+      const item = (label, value) => `<div class="detail-item"><span>${label}</span><strong>${App.escapeHtml(String(value || '—'))}</strong></div>`;
+      const rows = [
+        item('Email', u.email),
+        item('Phone', u.phone),
+      ];
+      if (isStudent) {
+        rows.push(
+          item('Matric Number', u.matric_number),
+          item('Faculty', u.faculty_name),
+          item('Department', u.department_name),
+          item('Programme', u.programme_name),
+          item('Level', u.level_name),
+          item('Study Mode', u.study_mode_name),
+        );
+      } else {
+        rows.push(
+          item('Staff Number', u.staff_number),
+          item('Staff Type', u.staff_type === 'non_academic' ? 'Non-teaching' : 'Teaching'),
+          item('Faculty', u.staff_faculty_name),
+          item('Department', u.staff_department_name),
+        );
+      }
+      rows.push(
+        item('Account Status', statusLabels[u.status] || u.status),
+        item('Email Verified', u.email_verified ? 'Yes' : 'No'),
+        item('Registered On', App.formatDate(u.created_at)),
+      );
+
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay open';
+      overlay.innerHTML = `
+        <div class="modal-box" style="max-width:560px; text-align:left;">
+          <h3 style="margin-bottom:4px;">${App.escapeHtml(fullName)}</h3>
+          <div style="font-size:12.5px; color:#607067; font-weight:600; margin-bottom:12px;">${isStudent ? '🎓 Student registration details' : '🧑‍🏫 Staff registration details'}</div>
+          <div class="detail-grid" style="margin:0 0 6px;">${rows.join('')}</div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" data-action="close">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.dataset.action === 'close') overlay.remove();
+      });
+    } catch (err) { App.showError(err); }
+  }
+
+  async function load() {
+    const region = document.getElementById('table-region');
+    region.innerHTML = '<div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div>';
+
+    const roleParam = state.tab === 'students' ? 'student' : 'staff';
+    const p = new URLSearchParams({ role: roleParam });
+    if (searchTerm) p.set('search', searchTerm);
+    if (state.tab === 'approvals') p.set('status', 'pending_approval');
+    if (state.tab === 'academic' || state.tab === 'non_academic') p.set('staffType', state.tab);
+
+    try {
+      const rows = await Api.get(`/api/admin/users?${p}`);
+      if (rows.length === 0) {
+        const empty = {
+          academic: { emoji: '📚', title: 'No teaching staff found', body: 'Teaching staff accounts will appear here once registered.' },
+          non_academic: { emoji: '👥', title: 'No non-teaching staff found', body: 'Non-teaching staff accounts will appear here once registered.' },
+          students: { emoji: '🎓', title: 'No students found', body: 'Students will appear here once registered.' },
+          staff: { emoji: '🧑‍🏫', title: 'No staff found', body: 'Staff accounts will appear here once registered.' },
+          approvals: { emoji: '✅', title: 'No pending approvals', body: "You're all caught up." },
+        }[state.tab];
+        region.innerHTML = `<div class="empty-state"><div class="emoji">${empty.emoji}</div><h3>${empty.title}</h3><p>${empty.body}</p></div>`;
+        return;
+      }
+
+      region.innerHTML = `
+        <div class="panel" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Name</th><th>Email</th><th>${state.tab === 'students' ? 'Matric No.' : 'Staff No.'}</th>
+            ${state.tab !== 'students' ? '<th>Staff type</th>' : ''}<th>Status</th><th>Verified</th><th>Joined</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td>${App.escapeHtml(r.first_name)} ${App.escapeHtml(r.last_name)}</td>
+                <td>${App.escapeHtml(r.email)}</td>
+                ${state.tab !== 'students' ? `<td>${r.staff_type === 'non_academic' ? 'Non-teaching' : 'Teaching'}</td>` : ''}
+                <td>${App.escapeHtml(r.matric_number || r.staff_number || '—')}</td>
+                <td>${statusBadge(r.status)}</td>
+                <td>${r.email_verified ? '✅' : '—'}</td>
+                <td>${App.formatDate(r.created_at)}</td>
+                <td style="text-align:right; white-space:nowrap;">
+                  <button class="btn btn-sm btn-secondary" data-action="details" data-id="${r.id}">Details</button>
+                  ${state.tab !== 'students' && r.status === 'pending_approval' ? `<button class="btn btn-sm btn-primary" data-action="approve" data-id="${r.id}">Approve</button>` : ''}
+                  ${state.tab !== 'students' && r.status === 'active' ? `<button class="btn btn-sm btn-danger" data-action="suspend-staff" data-id="${r.id}">Suspend</button>` : ''}
+                  ${state.tab !== 'students' && r.status === 'suspended' ? `<button class="btn btn-sm btn-secondary" data-action="reactivate-staff" data-id="${r.id}">Reactivate</button>` : ''}
+                  ${state.tab === 'students' && r.status === 'active' ? `<button class="btn btn-sm btn-danger" data-action="suspend-student" data-id="${r.id}">Suspend</button>` : ''}
+                  ${state.tab === 'students' && r.status === 'suspended' ? `<button class="btn btn-sm btn-secondary" data-action="reactivate-student" data-id="${r.id}">Reactivate</button>` : ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        </div>`;
+
+      region.querySelectorAll('button[data-action]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.id;
+          if (btn.dataset.action === 'details') { openDetails(id); return; }
+          const actions = {
+            approve: { url: `/api/admin/staff/${id}/approve`, msg: 'Staff account approved.' },
+            'suspend-staff': { url: `/api/admin/staff/${id}/suspend`, msg: 'Staff account suspended.', confirm: true },
+            'reactivate-staff': { url: `/api/admin/staff/${id}/reactivate`, msg: 'Staff account reactivated.' },
+            'suspend-student': { url: `/api/admin/students/${id}/suspend`, msg: 'Student account suspended.', confirm: true },
+            'reactivate-student': { url: `/api/admin/students/${id}/reactivate`, msg: 'Student account reactivated.' },
+          };
+          const action = actions[btn.dataset.action];
+          if (action.confirm) {
+            const ok = await App.confirmModal({ title: 'Are you sure?', body: 'This will restrict the account\'s access.', confirmLabel: 'Suspend', danger: true });
+            if (!ok) return;
+          }
+          try {
+            await Api.post(action.url);
+            App.toast(action.msg, 'success');
+            load();
+          } catch (err) { App.showError(err); }
+        });
+      });
+    } catch (err) {
+      region.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

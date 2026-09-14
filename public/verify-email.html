@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verify Email · EduMemo</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<div class="auth-shell">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img src="/images/logo.png" alt="Institution logo">
+      <span data-institution-name>EduMemo</span>
+    </div>
+    <h1>Email verification</h1>
+    <div id="status-region">
+      <p class="muted">Verifying your email address…</p>
+    </div>
+    <a href="/login.html" class="btn btn-primary btn-block" id="continue-btn" style="display:none; margin-top:8px;">Continue to log in</a>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+  App.loadInstitutionBranding();
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  const statusRegion = document.getElementById('status-region');
+  const continueBtn = document.getElementById('continue-btn');
+
+  (async () => {
+    if (!token) {
+      statusRegion.innerHTML = '<div class="alert alert-error">No verification token was provided.</div>';
+      return;
+    }
+    try {
+      const res = await Api.post('/api/auth/verify-email', { token });
+      statusRegion.innerHTML = `<div class="alert alert-success">${App.escapeHtml(res.message)}</div>`;
+      continueBtn.style.display = 'flex';
+    } catch (err) {
+      statusRegion.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  })();
+</script>
+</body>
+</html>

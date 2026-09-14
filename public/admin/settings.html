@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Settings · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'administrator', showSearch: false });
+  App.initUserChrome(user);
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>System Settings</h1></div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Email (SMTP) Status</h2></div>
+      <div id="email-status"></div>
+      <p class="field-hint">SMTP credentials are configured via environment variables (.env) on the server, not through this interface, so institutional email credentials are never exposed in application code or the database. See the README for setup instructions.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Institution Branding</h2></div>
+      <p class="field-hint">The institution name, short name, and logo are configured via environment variables and the <code>/public/images/logo.png</code> file, so they can be updated without touching application code. Current name: <strong id="inst-name"></strong></p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>My Profile</h2></div>
+      <form id="profile-form">
+        <div class="form-row">
+          <div class="field"><label for="firstName">First name</label><input type="text" id="firstName" required></div>
+          <div class="field"><label for="lastName">Last name</label><input type="text" id="lastName" required></div>
+        </div>
+        <button type="submit" class="btn btn-secondary">Save profile</button>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Change Password</h2></div>
+      <form id="password-form">
+        <div class="field"><label for="currentPassword">Current password</label><input type="password" id="currentPassword" required></div>
+        <div class="form-row">
+          <div class="field"><label for="newPassword">New password</label><input type="password" id="newPassword" required minlength="8"></div>
+          <div class="field"><label for="confirmPassword">Confirm new password</label><input type="password" id="confirmPassword" required minlength="8"></div>
+        </div>
+        <button type="submit" class="btn btn-secondary">Change password</button>
+      </form>
+    </div>
+  `;
+
+  try {
+    const { emailConfigured, institutionName } = await Api.get('/api/admin/settings');
+    document.getElementById('inst-name').textContent = institutionName;
+    document.getElementById('email-status').innerHTML = emailConfigured
+      ? '<span class="badge badge-green">Configured</span> Emails are being sent via the configured SMTP server.'
+      : '<span class="badge badge-amber">Not configured</span> Emails are currently logged to the server console instead of being sent (development mode).';
+  } catch (err) { App.showError(err); }
+
+  try {
+    const { account } = await Api.get('/api/profile');
+    document.getElementById('firstName').value = account.firstName;
+    document.getElementById('lastName').value = account.lastName;
+  } catch (err) { /* ignore */ }
+
+  document.getElementById('profile-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await Api.put('/api/profile', {
+        firstName: document.getElementById('firstName').value.trim(),
+        lastName: document.getElementById('lastName').value.trim(),
+        otherName: '', phone: '',
+      });
+      App.toast('Profile updated.', 'success');
+    } catch (err) { App.showError(err); }
+  });
+
+  document.getElementById('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    if (newPassword !== confirmPassword) return App.toast('New passwords do not match.', 'error');
+    try {
+      await Api.post('/api/profile/change-password', { currentPassword: document.getElementById('currentPassword').value, newPassword, confirmPassword });
+      App.toast('Password changed successfully.', 'success');
+      e.target.reset();
+    } catch (err) { App.showError(err); }
+  });
+})();
+</script>
+</body>
+</html>

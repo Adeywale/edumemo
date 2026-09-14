@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create Memo · EduMemo</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['staff']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'staff', showSearch: false });
+  App.initUserChrome(user);
+  if (user.staffType === 'non_academic') {
+    window.location.replace('/staff/memos.html?tab=received');
+    return;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const editId = params.get('id');
+  const state = { memoId: editId ? Number(editId) : null, attachmentName: null, existingAttachment: null };
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>${editId ? 'Edit Draft' : 'Create Memo'}</h1></div>
+    ${user.status !== 'active' ? '<div class="alert alert-info">You can save drafts now, but publishing requires an approved staff account.</div>' : ''}
+
+    <div class="panel">
+      <div class="field"><label for="title">Memo Title *</label><input type="text" id="title" required maxlength="200"></div>
+      <div class="form-row">
+        <div class="field"><label for="categoryId">Category</label><select id="categoryId"><option value="">No category</option></select></div>
+        <div class="field"><label for="attachment">Attachment (PDF, DOC, DOCX, JPG, PNG — max 15MB)</label>
+          <input type="file" id="attachment" multiple accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+          <div class="field-hint" id="attachment-current"></div>
+        </div>
+      </div>
+      <div class="field"><label for="body">Memo Body *</label><textarea id="body" required rows="9"></textarea></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Target Audience</h2><span class="sub">Use the available filters to reach the right students.</span></div>
+      <div class="form-row three">
+        <div class="field"><label for="facultyId">Faculty / School</label><select id="facultyId"><option value="">— Select —</option></select></div>
+        <div class="field"><label for="departmentId">Department</label><select id="departmentId"><option value="">— Select —</option></select></div>
+      </div>
+      <div class="form-row three">
+        <div class="field"><label for="levelId">Level</label><select id="levelId"><option value="">— Select —</option></select></div>
+        <div class="field"><label for="studyModeId">Study Mode</label><select id="studyModeId"><option value="">— Select —</option></select></div>
+        <div class="field"><label for="courseSearch">Course (optional)</label>
+          <input type="text" id="courseSearch" autocomplete="off" placeholder="Type a course code or title…">
+          <div class="field-hint" id="course-match-hint" style="display:none;"></div>
+        </div>
+      </div>
+      <select id="courseId" hidden><option value=""></option></select>
+      <div class="panel" style="background:var(--green-tint); border-color:var(--green-tint-border); margin-bottom:0;">
+        <strong id="estimate-text">Estimated recipients: 0</strong>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:12px; flex-wrap:wrap;">
+      <button class="btn btn-secondary" id="save-draft-btn">Save Draft</button>
+      <button class="btn btn-secondary" id="preview-btn">Preview</button>
+      <button class="btn btn-primary" id="publish-btn">Publish Memo</button>
+      ${editId ? '<button class="btn btn-danger" id="delete-draft-btn" style="margin-left:auto;">Delete Draft</button>' : ''}
+    </div>
+  `;
+
+  const $ = (id) => document.getElementById(id);
+
+  // ---- Load lookup data ----
+  const [categories, faculties, levels, modes, departments] = await Promise.all([
+    Api.get('/api/meta/categories'), Api.get('/api/meta/faculties'), Api.get('/api/meta/levels'), Api.get('/api/meta/study-modes'), Api.get('/api/meta/departments'),
+  ]);
+  $('categoryId').innerHTML += categories.map(c => `<option value="${c.id}">${App.escapeHtml(c.name)}</option>`).join('');
+  $('facultyId').innerHTML += faculties.map(f => `<option value="${f.id}">${App.escapeHtml(f.name)}</option>`).join('');
+  $('levelId').innerHTML += levels.map(l => `<option value="${l.id}">${App.escapeHtml(l.name)}</option>`).join('');
+  $('studyModeId').innerHTML += modes.map(m => `<option value="${m.id}">${App.escapeHtml(m.name)}</option>`).join('');
+  $('departmentId').innerHTML = '<option value="">— Select —</option>' + departments.map(d => `<option value="${d.id}">${App.escapeHtml(d.name)}</option>`).join('');
+
+  let courseDebounce;
+  $('courseSearch').addEventListener('input', () => {
+    clearTimeout(courseDebounce);
+    courseDebounce = setTimeout(async () => {
+      const q = $('courseSearch').value.trim();
+      const hint = $('course-match-hint');
+      if (!q) {
+        $('courseId').value = '';
+        hint.style.display = 'none';
+        estimate();
+        return;
+      }
+      try {
+        const courses = await Api.get(`/api/meta/courses?search=${encodeURIComponent(q)}`);
+        const lower = q.toLowerCase();
+        const best = courses.find(c => (c.code || '').toLowerCase() === lower) || courses[0];
+        if (best) {
+          $('courseId').innerHTML = `<option value="${best.id}" selected>${App.escapeHtml(best.code)} — ${App.escapeHtml(best.title)}</option>`;
+          $('courseId').value = String(best.id);
+          hint.textContent = `Targeting: ${best.code} — ${best.title}`;
+        } else {
+          $('courseId').innerHTML = '<option value=""></option>';
+          $('courseId').value = '';
+          hint.textContent = 'No matching course — the memo will send without one.';
+        }
+        hint.style.display = 'block';
+      } catch (e) { /* keep previous selection if the lookup fails */ }
+      estimate();
+    }, 300);
+  });
+
+  ['facultyId', 'departmentId', 'levelId', 'studyModeId', 'courseId'].forEach(id => $(id).addEventListener('change', estimate));
+
+  async function estimate() {
+    const p = new URLSearchParams();
+    ['facultyId', 'departmentId', 'levelId', 'studyModeId', 'courseId'].forEach(id => {
+      if ($(id).value) p.set(id, $(id).value);
+    });
+    try {
+      const { count } = await Api.get(`/api/memos/estimate?${p}`);
+      $('estimate-text').textContent = `Estimated recipients: ${count}`;
+    } catch (err) { /* ignore */ }
+  }
+
+  $('attachment').addEventListener('change', () => {
+    if ($('attachment').files[0]) $('attachment-current').textContent = `Selected: ${$('attachment').files[0].name}`;
+  });
+
+  // ---- Prefill for edit mode ----
+  if (editId) {
+    try {
+      const { memo, attachment, targetRule } = await Api.get(`/api/memos/${editId}`);
+      $('title').value = memo.title;
+      $('body').value = memo.body;
+      if (memo.category_id) $('categoryId').value = memo.category_id;
+      if (attachment) { state.existingAttachment = attachment; $('attachment-current').textContent = `Current: ${attachment.original_filename}`; }
+      if (targetRule) {
+        if (targetRule.faculty_id) $('facultyId').value = targetRule.faculty_id;
+        if (targetRule.department_id) $('departmentId').value = targetRule.department_id;
+        if (targetRule.level_id) $('levelId').value = targetRule.level_id;
+        if (targetRule.study_mode_id) $('studyModeId').value = targetRule.study_mode_id;
+        if (targetRule.course_id) {
+          $('courseId').innerHTML += `<option value="${targetRule.course_id}" selected>${App.escapeHtml(targetRule.course_code)} — ${App.escapeHtml(targetRule.course_title)}</option>`;
+          $('courseId').value = String(targetRule.course_id);
+          const hint = $('course-match-hint');
+          hint.textContent = `Targeting: ${targetRule.course_code} — ${targetRule.course_title}`;
+          hint.style.display = 'block';
+        }
+      }
+      estimate();
+    } catch (err) { App.showError(err); }
+  } else {
+    estimate();
+  }
+
+  function buildFormData() {
+    const fd = new FormData();
+    fd.append('title', $('title').value.trim());
+    fd.append('body', $('body').value.trim());
+    fd.append('categoryId', $('categoryId').value);
+    fd.append('institutionWide', 'false');
+    ['facultyId', 'departmentId', 'levelId', 'studyModeId', 'courseId'].forEach(id => fd.append(id, $(id).value));
+    [...$('attachment').files].forEach(file => fd.append('attachments', file));
+    return fd;
+  }
+
+  function validate() {
+    if (!$('title').value.trim() || !$('body').value.trim()) { App.toast('Title and body are required.', 'error'); return false; }
+    const anyFilter = ['facultyId', 'departmentId', 'levelId', 'studyModeId', 'courseId'].some(id => $(id).value);
+    if (!anyFilter) { App.toast('Please select at least one target audience filter.', 'error'); return false; }
+    return true;
+  }
+
+  async function saveDraft(showToast = true) {
+    if (!validate()) return null;
+    try {
+      const fd = buildFormData();
+      if (state.memoId) {
+        await Api.putForm(`/api/memos/${state.memoId}`, fd);
+      } else {
+        const res = await Api.postForm('/api/memos', fd);
+        state.memoId = res.memoId;
+      }
+      if (showToast) App.toast('Draft saved.', 'success');
+      return state.memoId;
+    } catch (err) { App.showError(err); return null; }
+  }
+
+  // Guards against double/triple-clicking Save Draft or Publish while a
+  // request is still in flight -- prevents a second click's saveDraft() PUT
+  // from hitting a memo the first click already published, which used to
+  // surface as "Only draft memos can be edited".
+  let isSubmitting = false;
+  async function withSubmitGuard(buttons, fn) {
+    if (isSubmitting) return;
+    isSubmitting = true;
+    const originalLabels = buttons.map(btn => btn.textContent);
+    buttons.forEach(btn => { btn.disabled = true; });
+    try {
+      await fn();
+    } finally {
+      isSubmitting = false;
+      buttons.forEach((btn, i) => { btn.disabled = false; btn.textContent = originalLabels[i]; });
+    }
+  }
+
+  $('save-draft-btn').addEventListener('click', () => {
+    const btn = $('save-draft-btn');
+    withSubmitGuard([btn, $('publish-btn')], async () => {
+      btn.textContent = 'Saving…';
+      await saveDraft();
+    });
+  });
+
+  $('preview-btn').addEventListener('click', () => {
+    if (!validate()) return;
+    const categoryText = $('categoryId').selectedOptions[0]?.text || '';
+    const attachmentName = $('attachment').files[0]?.name || (state.existingAttachment ? state.existingAttachment.original_filename : null);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay open';
+    overlay.innerHTML = `
+      <div class="modal-box" style="max-width:600px; text-align:left;">
+        <div class="memo-doc" style="border:none;">
+          <div class="memo-doc-header" style="padding:0 0 16px;">
+            ${categoryText && categoryText !== 'No category' ? `<span class="badge badge-grey">${App.escapeHtml(categoryText)}</span>` : ''}
+            <h1 style="margin-top:8px;">${App.escapeHtml($('title').value)}</h1>
+            <div class="memo-doc-meta">
+              <span><strong>From:</strong> ${App.escapeHtml(user.firstName + ' ' + user.lastName)}</span>
+              <span><strong>Date:</strong> ${new Date().toLocaleDateString()}</span>
+              <span>${App.escapeHtml($('estimate-text').textContent)}</span>
+            </div>
+          </div>
+          <div class="memo-doc-body" style="padding:16px 0;">${App.escapeHtml($('body').value)}</div>
+          ${attachmentName ? `<div class="memo-doc-attachment" style="margin:0 0 16px;"><div class="label">Attachment</div><div class="attachment-row"><span class="icon">📄</span>${App.escapeHtml(attachmentName)}</div></div>` : ''}
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" data-action="cancel">Back to Edit</button>
+          <button class="btn btn-primary" data-action="publish">Publish</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.dataset.action === 'cancel') overlay.remove();
+      else if (e.target.dataset.action === 'publish') { overlay.remove(); doPublish(); }
+    });
+  });
+
+  async function doPublish() {
+    const id = await saveDraft(false);
+    if (!id) return;
+    try {
+      await Api.post(`/api/memos/${id}/publish`, {});
+      App.toast('Memo published successfully.', 'success');
+      setTimeout(() => window.location.href = '/staff/memos.html?tab=sent', 900);
+    } catch (err) { App.showError(err); }
+  }
+
+  $('publish-btn').addEventListener('click', () => {
+    const btn = $('publish-btn');
+    withSubmitGuard([btn, $('save-draft-btn')], async () => {
+      btn.textContent = 'Sending…';
+      await doPublish();
+    });
+  });
+
+  if (editId) {
+    $('delete-draft-btn').addEventListener('click', async () => {
+      const ok = await App.confirmModal({ title: 'Delete this draft?', body: 'This cannot be undone.', confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        await Api.del(`/api/memos/${state.memoId}`);
+        App.toast('Draft deleted.', 'success');
+        window.location.href = '/staff/memos.html?tab=drafts';
+      } catch (err) { App.showError(err); }
+    });
+  }
+})();
+</script>
+</body>
+</html>

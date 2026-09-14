@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Audit Logs · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'administrator', showSearch: false });
+  App.initUserChrome(user);
+
+  const state = { page: 1, action: '' };
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>Audit Logs</h1></div>
+    <div class="panel">
+      <div class="field" style="margin-bottom:0; max-width:320px;">
+        <label for="action-filter">Filter by action</label>
+        <input type="text" id="action-filter">
+      </div>
+    </div>
+    <div id="table-region"></div>
+    <div class="pagination" id="pagination"></div>
+  `;
+
+  let debounce;
+  document.getElementById('action-filter').addEventListener('input', (e) => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { state.action = e.target.value.trim(); state.page = 1; load(); }, 300);
+  });
+
+  async function load() {
+    const region = document.getElementById('table-region');
+    region.innerHTML = '<div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div>';
+    try {
+      const p = new URLSearchParams({ page: state.page });
+      if (state.action) p.set('action', state.action);
+      const { logs, total, pageSize } = await Api.get(`/api/admin/audit-logs?${p}`);
+
+      if (logs.length === 0) {
+        region.innerHTML = `<div class="empty-state"><div class="emoji">📜</div><h3>No audit entries found</h3><p>Try a different filter.</p></div>`;
+        document.getElementById('pagination').innerHTML = '';
+        return;
+      }
+
+      region.innerHTML = `
+        <div class="panel" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th></tr></thead>
+          <tbody>${logs.map(l => `
+            <tr>
+              <td>${App.formatDate(l.created_at)}</td>
+              <td>${App.escapeHtml(l.actor_name || 'System')}</td>
+              <td><code>${App.escapeHtml(l.action)}</code></td>
+              <td>${l.target_type ? `${App.escapeHtml(l.target_type)} #${l.target_id}` : '—'}</td>
+              <td class="muted">${App.escapeHtml(l.ip_address || '—')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        </div>`;
+
+      const totalPages = Math.max(1, Math.ceil(total / pageSize));
+      const pagination = document.getElementById('pagination');
+      if (totalPages > 1) {
+        let buttons = '';
+        for (let p2 = 1; p2 <= totalPages; p2++) buttons += `<button class="btn btn-sm ${p2 === state.page ? 'btn-primary' : 'btn-secondary'}" data-page="${p2}">${p2}</button>`;
+        pagination.innerHTML = buttons;
+        pagination.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { state.page = Number(b.dataset.page); load(); }));
+      } else { pagination.innerHTML = ''; }
+    } catch (err) {
+      region.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

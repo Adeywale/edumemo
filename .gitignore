@@ -1,0 +1,36 @@
+node_modules/
+.env
+
+# --- databases: NEVER commit (real user data + password hashes) ---
+*.sqlite
+*.sqlite3
+database/database.sqlite
+database/sessions.sqlite
+database/database-backup.sqlite
+
+# --- uploaded attachments ---
+public/uploads/*
+!public/uploads/.gitkeep
+
+# --- local secrets / credentials leaked into test payloads ---
+admin-login.json
+login-body.json
+login-cookies.txt
+cookies.txt
+csrf-test.json
+new-login.json
+reset-body.json
+reset-invalid.json
+reuse-token.json
+forget-body.json
+push-sub.json
+test-body.json
+test-body2.json
+
+# --- logs and ad-hoc command output ---
+*.log
+*.txt
+!README.md
+npm-debug.log*
+.DS_Store
+

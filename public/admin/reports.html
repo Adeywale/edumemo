@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reports · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'administrator', showSearch: false });
+  App.initUserChrome(user);
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>Reports &amp; Analytics</h1><button class="btn btn-secondary" id="refresh-btn">↻ Refresh</button></div>
+    <div class="stat-row" id="top-stats"></div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Email Delivery</h2></div>
+      <div id="email-region"></div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Publishing activity — last 6 months</h2></div>
+      <div id="activity-region"></div>
+    </div>
+
+    <div class="form-row">
+      <div class="panel">
+        <div class="panel-header"><h2>Published memos by category</h2></div>
+        <div id="category-region"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><h2>Top senders (published memos)</h2></div>
+        <div id="senders-region"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Platform users</h2></div>
+      <div id="users-region"></div>
+    </div>
+  `;
+
+  function emptyState(emoji, title, body) {
+    return `<div class="empty-state"><div class="emoji">${emoji}</div><h3>${title}</h3><p>${body}</p></div>`;
+  }
+
+  function barRow(label, value, max, suffix = '') {
+    const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+    return `
+      <div style="display:grid; grid-template-columns: 120px 1fr 52px; align-items:center; gap:10px; padding:5px 0;">
+        <span style="font-size:12.5px; font-weight:600; color:#54655c; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${App.escapeHtml(label)}</span>
+        <div style="background:#e7efe9; border-radius:4px; height:10px; overflow:hidden;">
+          <div style="background:var(--green); height:100%; width:${pct}%; border-radius:4px;"></div>
+        </div>
+        <span style="font-size:12.5px; font-weight:700; color:#176b38; text-align:right;">${value}${suffix}</span>
+      </div>`;
+  }
+
+  async function load() {
+    const refreshBtn = document.getElementById('refresh-btn');
+    refreshBtn.disabled = true;
+    document.getElementById('top-stats').innerHTML = '<div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div>';
+    try {
+      const data = await Api.get('/api/admin/reports');
+      const { memoCounts, readStats, byCategory, monthly, topSenders, userStats, emailStats, recentEmailFailures, emailConfigured } = data;
+
+      const readRate = readStats.delivered > 0 ? Math.round((readStats.read_count / readStats.delivered) * 100) : 0;
+      document.getElementById('top-stats').innerHTML = `
+        <div class="stat-card"><div class="value">${memoCounts.published}</div><div class="label">Published Memos</div></div>
+        <div class="stat-card"><div class="value">${memoCounts.drafts}</div><div class="label">Drafts</div></div>
+        <div class="stat-card"><div class="value">${memoCounts.archived}</div><div class="label">Archived</div></div>
+        <div class="stat-card"><div class="value">${readRate}%</div><div class="label">Overall Read Rate</div><div class="sub">${readStats.read_count} of ${readStats.delivered} deliveries read</div></div>
+      `;
+
+      const emailRegion = document.getElementById('email-region');
+      const sentPct = emailStats.total > 0 ? Math.round((emailStats.sent / emailStats.total) * 100) : 0;
+      if (emailStats.total === 0) {
+        emailRegion.innerHTML = emptyState('📧', 'No memo emails sent yet', 'Email delivery results appear here after memos are published.');
+      } else {
+        emailRegion.innerHTML = `
+          <div class="stat-row">
+            <div class="stat-card"><div class="value">${emailStats.total}</div><div class="label">Total Emails</div></div>
+            <div class="stat-card"><div class="value">${emailStats.sent}</div><div class="label">Delivered</div></div>
+            <div class="stat-card"><div class="value" style="${emailStats.failed > 0 ? 'color:var(--red);' : ''}">${emailStats.failed}</div><div class="label">Failed</div></div>
+            <div class="stat-card"><div class="value">${sentPct}%</div><div class="label">Delivery Success</div></div>
+          </div>
+          ${emailConfigured ? '' : `<p><span class="badge badge-amber">SMTP not configured</span> Emails are being logged to the server console instead of sent (development mode). Fill in <code>SMTP_*</code> in <code>.env</code> and restart the server to enable real delivery.</p>`}
+          ${emailStats.failed > 0 ? `
+            <p style="color:var(--red); font-weight:700; margin:14px 0 6px;">⚠️ ${emailStats.failed} memo email(s) failed to send. The most common cause is an invalid or revoked Gmail App Password in <code>.env</code> (must be a 16-character key with no spaces). Update <code>SMTP_PASSWORD</code> and restart the server.</p>
+            <div class="panel" style="padding:0; overflow-x:auto;">
+              <table class="data-table">
+                <thead><tr><th>Memo</th><th>To</th><th>When</th><th>Error</th></tr></thead>
+                <tbody>
+                  ${recentEmailFailures.map(f => `
+                    <tr>
+                      <td>#${f.memo_id || '—'}</td>
+                      <td>${App.escapeHtml(f.to_email)}</td>
+                      <td>${App.timeAgo(f.created_at)}</td>
+                      <td style="font-size:11.5px; color:var(--red); word-break:break-word;">${App.escapeHtml((f.error || '').slice(0, 180))}</td>
+                    </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>` : ''}
+        `;
+      }
+
+      const activityRegion = document.getElementById('activity-region');
+      if (monthly.length === 0) {
+        activityRegion.innerHTML = emptyState('📈', 'No publishing activity yet', 'Charts appear here once memos start being published.');
+      } else {
+        const maxCount = Math.max(...monthly.map(m => m.count));
+        activityRegion.innerHTML = monthly.map(m => {
+          const label = new Date(`${m.month}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+          return barRow(label, m.count, maxCount);
+        }).join('');
+      }
+
+      const categoryRegion = document.getElementById('category-region');
+      if (byCategory.length === 0) {
+        categoryRegion.innerHTML = emptyState('🗂️', 'No published memos', 'Category distribution appears once memos are published.');
+      } else {
+        const maxCat = Math.max(...byCategory.map(c => c.count));
+        categoryRegion.innerHTML = byCategory.map(c => barRow(c.name, c.count, maxCat)).join('');
+      }
+
+      const sendersRegion = document.getElementById('senders-region');
+      if (topSenders.length === 0) {
+        sendersRegion.innerHTML = emptyState('📤', 'No published memos', 'Top senders appear once memos are published.');
+      } else {
+        sendersRegion.innerHTML = `
+          <div class="panel" style="padding:0; overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>Sender</th><th>Role</th><th>Memos</th><th>Recipients</th></tr></thead>
+            <tbody>
+              ${topSenders.map(s => `
+                <tr>
+                  <td>${App.escapeHtml(s.first_name)} ${App.escapeHtml(s.last_name)}</td>
+                  <td><span class="badge badge-grey">${s.role}</span></td>
+                  <td>${s.count}</td>
+                  <td>${s.recipients}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>`;
+      }
+
+      document.getElementById('users-region').innerHTML = `
+        <div class="panel" style="padding:0; overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>Students</th><th>Teaching Staff</th><th>Non-Teaching Staff</th><th>Pending Staff Approvals</th><th>Administrators</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>${userStats.students}</td>
+              <td>${userStats.academicStaff}</td>
+              <td>${userStats.nonAcademicStaff}</td>
+              <td>${userStats.pendingStaff}</td>
+              <td>${userStats.administrators}</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>`;
+    } catch (err) {
+      App.showError(err);
+      document.getElementById('top-stats').innerHTML = emptyState('⚠️', 'Could not load reports', 'Click Refresh to try again.');
+    } finally {
+      refreshBtn.disabled = false;
+    }
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', load);
+  load();
+})();
+</script>
+</body>
+</html>

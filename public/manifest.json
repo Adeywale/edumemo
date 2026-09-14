@@ -1,0 +1,13 @@
+{
+  "id": "edumemo",
+  "name": "EduMemo",
+  "short_name": "EduMemo",
+  "description": "Stay informed, stay connected.",
+  "start_url": "/login.html",
+  "display": "standalone",
+  "background_color": "#f6f6f2",
+  "theme_color": "#157a3a",
+  "icons": [
+    { "src": "/images/logo.png", "sizes": "192x192", "type": "image/png" }
+  ]
+}

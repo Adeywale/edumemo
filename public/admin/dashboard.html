@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Overview · EduMemo Admin</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+<script>
+(async () => {
+  const user = await App.requireAuth(['administrator']);
+  if (!user) return;
+  App.loadInstitutionBranding();
+  const content = App.renderShell({ role: 'administrator', showSearch: false });
+  App.initUserChrome(user);
+
+  content.innerHTML = `
+    <div class="panel-header"><h1>System Overview</h1><a href="/admin/create-memo.html" class="btn btn-primary">📢 Send Institution-Wide Memo</a></div>
+    <div class="stat-row" id="stats"></div>
+    <div class="panel">
+      <div class="panel-header"><h2>Recent memo activity</h2><a href="/admin/memo-records.html" class="sub">View all records →</a></div>
+      <div id="recent-region"></div>
+    </div>
+  `;
+
+  try {
+    const data = await Api.get('/api/admin/overview');
+    document.getElementById('stats').innerHTML = `
+      <div class="stat-card"><div class="value">${data.studentCount}</div><div class="label">Students</div></div>
+      <div class="stat-card"><div class="value">${data.staffCount}</div><div class="label">Approved Staff</div></div>
+      <div class="stat-card"><div class="value">${data.pendingApprovals}</div><div class="label">Pending Approvals</div>${data.pendingApprovals > 0 ? `<a href="/admin/users.html?tab=approvals" class="sub">Review →</a>` : ''}</div>
+      <div class="stat-card"><div class="value">${data.publishedMemos}</div><div class="label">Published Memos</div></div>
+    `;
+
+    const region = document.getElementById('recent-region');
+    if (data.recentMemos.length === 0) {
+      region.innerHTML = `<div class="empty-state"><div class="emoji">🗂️</div><h3>No memos yet</h3><p>Activity will appear here once staff or administrators start publishing.</p></div>`;
+    } else {
+      region.innerHTML = `<div class="list">${data.recentMemos.map(m => `
+        <div class="list-row" onclick="window.location.href='/memo.html?id=${m.id}'">
+          <div class="row-main">
+            <div class="row-title">${App.escapeHtml(m.title)}</div>
+            <div class="row-meta">
+              <span>${App.escapeHtml(m.sender_name)}</span>
+              <span class="badge ${m.status === 'published' ? 'badge-green' : m.status === 'archived' ? 'badge-grey' : 'badge-amber'}">${m.status}</span>
+            </div>
+          </div>
+          <div class="row-side">${App.timeAgo(m.created_at)}</div>
+        </div>`).join('')}</div>`;
+    }
+  } catch (err) { App.showError(err); }
+})();
+</script>
+</body>
+</html>

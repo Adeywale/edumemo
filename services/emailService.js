@@ -52,7 +52,7 @@ function wrapTemplate(title, bodyHtml) {
       ${bodyHtml}
     </div>
     <div style="padding: 16px 0; border-top: 1px solid #e2e2e2; font-size: 12px; color: #888;">
-      This is an automated message from ${institution}'s EduMemo system. Please do not reply to this email.
+      This is an automated email from ${institution}. Do not reply to this email.
     </div>
   </div>`;
 }
@@ -80,11 +80,6 @@ function htmlToText(html) {
     .replace(/\n\s+/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-}
-
-/** Spam filters distrust localhost/private-IP links (they look like phishing). */
-function isPublicUrl(url) {
-  return /^(https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+)/i.test(url) && !/\/\/(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(url);
 }
 
 /**
@@ -148,8 +143,18 @@ function sendVerificationEmail(to, name, verifyUrl) {
   return sendEmail({ to, subject: 'Verify your EduMemo account', html });
 }
 
-function sendWelcomeEmail(to, name, loginUrl) {
-  const html = wrapTemplate('Welcome to EduMemo', `
+// `awaitingApproval` is set for staff registrations: their account cannot be
+// used until an administrator approves it, so the email asks them to wait for
+// the approval notice instead of inviting them to log in straight away.
+function sendWelcomeEmail(to, name, loginUrl, awaitingApproval = false) {
+  const html = wrapTemplate('Welcome to EduMemo', awaitingApproval
+    ? `
+    <p>Hello ${name},</p>
+    <p>Thank you for registering on the EduMemo memo distribution system. Your staff account has been created, but an administrator must approve it before you can log in.</p>
+    <p>You will receive a confirmation email as soon as your account has been approved.</p>
+    <p>If you did not create this account, please contact your institution's administration.</p>
+  `
+    : `
     <p>Hello ${name},</p>
     <p>Thank you for registering on the EduMemo memo distribution system. Your account is ready to use — no email verification is required.</p>
     <p><a href="${loginUrl}" style="background:#1b8a3d;color:#fff;padding:10px 18px;border-radius:4px;text-decoration:none;display:inline-block;">Log in to EduMemo</a></p>
@@ -182,17 +187,27 @@ function memoNotificationSubject(memoTitle) {
 }
 
 function sendMemoNotificationEmail(to, name, memo, memoUrl) {
-  // A "click here" button pointing at a localhost/private URL is one of the
-  // strongest phishing signals in the message — only include it when BASE_URL
-  // is a real public domain. Otherwise tell the reader to log in instead.
-  const linkHtml = isPublicUrl(memoUrl)
-    ? `<p><a href="${memoUrl}" style="background:#1b8a3d;color:#fff;padding:10px 18px;border-radius:4px;text-decoration:none;display:inline-block;">View Memo</a></p>
-       <p style="font-size:12px;color:#666;">Or paste this link into your browser:<br>${memoUrl}</p>`
-    : `<p>Log in to the ${INSTITUTION_NAME || 'EduMemo'} portal and open <strong>Received Memos</strong> to read it.</p>`;
+  // The green "View Memo" button is rendered for every recipient in every
+  // environment -- including localhost development, where BASE_URL is not a
+  // public domain. It links to the same memo permalink used by the web push
+  // notification (/memo/:id), so one click opens the published memo straight
+  // away (a visitor who is not signed in is sent through the login page first).
+  //
+  // The button is built with a <table>, not a bare <a>: Gmail, Outlook and
+  // mobile clients strip background/padding styles from inline anchors, which
+  // turns them into plain underlined text. A table cell with bgcolor survives
+  // those rewrites, so the button always looks and behaves like a real button.
   const html = wrapTemplate(memo.title, `
     <p>Hello ${name},</p>
     <p>A new memo titled <strong>${memo.title}</strong> has been published${memo.senderName ? ' by ' + memo.senderName : ''}.</p>
-    ${linkHtml}
+    <p style="margin-top:20px;">Login to view memo</p>
+    <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="margin:16px 0;">
+      <tr>
+        <td align="center" bgcolor="#1b8a3d" style="border-radius:6px;background-color:#1b8a3d;padding:14px 36px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;">
+          <a href="${memoUrl}" target="_blank" style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none;">VIEW MEMO</a>
+        </td>
+      </tr>
+    </table>
   `);
   return sendEmail({ to, subject: memoNotificationSubject(memo.title), html });
 }

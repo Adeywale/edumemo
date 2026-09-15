@@ -50,6 +50,28 @@
     return `<span class="badge ${map[status] || 'badge-grey'}">${label[status] || status}</span>`;
   }
 
+  // Permanent account removal, shared by the table buttons and the Details
+  // modal. The dialog names the account and spells out exactly what is
+  // destroyed, because this cannot be undone.
+  async function deleteAccount({ id, name, role, memoCount = 0 }) {
+    const owned = role === 'student'
+      ? 'their profile, inbox, read receipts, notifications, saved devices and sign-in sessions'
+      : `their profile, notifications, saved devices and sign-in sessions${memoCount > 0 ? `, along with the ${memoCount} memo${memoCount === 1 ? '' : 's'} they sent (those leave every recipient's inbox too)` : ''}`;
+    const ok = await App.confirmModal({
+      title: 'DELETE THIS ACCOUNT PERMANENTLY?',
+      body: `${App.escapeHtml(name || 'This account')} will be removed completely, including ${owned}. This cannot be undone.`,
+      confirmLabel: 'Delete Account',
+      danger: true,
+    });
+    if (!ok) return false;
+    try {
+      const res = await Api.del(`/api/admin/users/${id}`);
+      App.toast((res && res.message) || 'Account deleted permanently.', 'success');
+      load();
+      return true;
+    } catch (err) { App.showError(err); return false; }
+  }
+
   async function openDetails(id) {
     try {
       const u = await Api.get(`/api/admin/users/${id}`);
@@ -82,6 +104,7 @@
         item('Account Status', statusLabels[u.status] || u.status),
         item('Email Verified', u.email_verified ? 'Yes' : 'No'),
         item('Registered On', App.formatDate(u.created_at)),
+        ...(isStudent ? [] : [item('Memos Sent', u.memo_count || 0)]),
       );
 
       const overlay = document.createElement('div');
@@ -92,11 +115,17 @@
           <div style="font-size:12.5px; color:#607067; font-weight:600; margin-bottom:12px;">${isStudent ? '🎓 Student registration details' : '🧑‍🏫 Staff registration details'}</div>
           <div class="detail-grid" style="margin:0 0 6px;">${rows.join('')}</div>
           <div class="modal-actions">
+            <button class="btn btn-danger" data-action="delete-account">Delete account</button>
             <button class="btn btn-secondary" data-action="close">Close</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);
-      overlay.addEventListener('click', (e) => {
+      overlay.addEventListener('click', async (e) => {
+        if (e.target.dataset.action === 'delete-account') {
+          const deleted = await deleteAccount({ id: u.id, name: fullName, role: u.role, memoCount: u.memo_count || 0 });
+          if (deleted) overlay.remove();
+          return;
+        }
         if (e.target === overlay || e.target.dataset.action === 'close') overlay.remove();
       });
     } catch (err) { App.showError(err); }
@@ -150,6 +179,7 @@
                   ${state.tab !== 'students' && r.status === 'suspended' ? `<button class="btn btn-sm btn-secondary" data-action="reactivate-staff" data-id="${r.id}">Reactivate</button>` : ''}
                   ${state.tab === 'students' && r.status === 'active' ? `<button class="btn btn-sm btn-danger" data-action="suspend-student" data-id="${r.id}">Suspend</button>` : ''}
                   ${state.tab === 'students' && r.status === 'suspended' ? `<button class="btn btn-sm btn-secondary" data-action="reactivate-student" data-id="${r.id}">Reactivate</button>` : ''}
+                  <button class="btn btn-sm btn-danger" data-action="delete-account" data-id="${r.id}" data-name="${App.escapeHtml(((r.first_name || '') + ' ' + (r.last_name || '')).trim())}" data-role="${r.role}" data-memos="${Number(r.memo_count) || 0}">Delete</button>
                 </td>
               </tr>
             `).join('')}
@@ -161,6 +191,15 @@
         btn.addEventListener('click', async () => {
           const id = btn.dataset.id;
           if (btn.dataset.action === 'details') { openDetails(id); return; }
+          if (btn.dataset.action === 'delete-account') {
+            await deleteAccount({
+              id,
+              name: btn.dataset.name,
+              role: btn.dataset.role,
+              memoCount: Number(btn.dataset.memos) || 0,
+            });
+            return;
+          }
           const actions = {
             approve: { url: `/api/admin/staff/${id}/approve`, msg: 'Staff account approved.' },
             'suspend-staff': { url: `/api/admin/staff/${id}/suspend`, msg: 'Staff account suspended.', confirm: true },
@@ -169,6 +208,7 @@
             'reactivate-student': { url: `/api/admin/students/${id}/reactivate`, msg: 'Student account reactivated.' },
           };
           const action = actions[btn.dataset.action];
+          if (!action) return;
           if (action.confirm) {
             const ok = await App.confirmModal({ title: 'Are you sure?', body: 'This will restrict the account\'s access.', confirmLabel: 'Suspend', danger: true });
             if (!ok) return;

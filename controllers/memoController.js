@@ -49,7 +49,7 @@ function createMemo(req, res) {
     return res.status(400).json({ error: 'Memo title and body are required.' });
   }
   if (user.role === 'staff' && user.staffType !== 'academic') {
-    return res.status(403).json({ error: 'Non-academic staff can receive memos but cannot create or send them.' });
+    return res.status(403).json({ error: 'Non-teaching staff can receive and read memos but cannot create or send them.' });
   }
 
   const isInstitutionWide = institutionWide === 'true' || institutionWide === true;
@@ -104,7 +104,7 @@ function updateMemo(req, res) {
   const memo = db.prepare(`SELECT * FROM memos WHERE id = ?`).get(memoId);
 
   if (user.role === 'staff' && user.staffType !== 'academic') {
-    return res.status(403).json({ error: 'Non-academic staff can receive memos but cannot create, edit, or send them.' });
+    return res.status(403).json({ error: 'Non-teaching staff can receive and read memos but cannot create, edit, or send them.' });
   }
   if (!memo) return res.status(404).json({ error: 'Memo not found.' });
   if (memo.sender_id !== user.id && user.role !== 'administrator') {
@@ -228,7 +228,7 @@ function archiveMemo(req, res) {
   const memo = db.prepare(`SELECT * FROM memos WHERE id = ?`).get(memoId);
 
   if (user.role === 'staff' && user.staffType !== 'academic') {
-    return res.status(403).json({ error: 'Non-academic staff can view received memos only.' });
+    return res.status(403).json({ error: 'Non-teaching staff can view received memos only.' });
   }
   if (!memo) return res.status(404).json({ error: 'Memo not found.' });
   if (memo.sender_id !== user.id && user.role !== 'administrator') {
@@ -254,7 +254,7 @@ function deleteMemo(req, res) {
   const memo = db.prepare(`SELECT * FROM memos WHERE id = ?`).get(memoId);
 
   if (user.role === 'staff' && user.staffType !== 'academic') {
-    return res.status(403).json({ error: 'Non-academic staff can view received memos only.' });
+    return res.status(403).json({ error: 'Non-teaching staff can view received memos only.' });
   }
   if (!memo) return res.status(404).json({ error: 'Memo not found.' });
   const isOwner = memo.sender_id === user.id;
@@ -317,7 +317,7 @@ function resendMemo(req, res) {
   const memo = db.prepare(`SELECT * FROM memos WHERE id = ?`).get(memoId);
 
   if (user.role === 'staff' && user.staffType !== 'academic') {
-    return res.status(403).json({ error: 'Non-academic staff can view received memos only.' });
+    return res.status(403).json({ error: 'Non-teaching staff can view received memos only.' });
   }
   if (!memo) return res.status(404).json({ error: 'Memo not found.' });
   const isOwner = memo.sender_id === user.id;
@@ -400,7 +400,7 @@ function listMemos(req, res) {
 
   if (user.role === 'staff') {
     if (user.staffType === 'non_academic' && req.query.filter !== 'received') {
-      return res.status(403).json({ error: 'Non-academic staff can view received memos only.' });
+      return res.status(403).json({ error: 'Non-teaching staff can view received memos only.' });
     }
     if (req.query.filter === 'received') {
       const rows = db.prepare(`

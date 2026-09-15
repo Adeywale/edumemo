@@ -106,7 +106,7 @@ function registerStudent(req, res) {
   logAction({ actor: null, action: 'student.register', targetType: 'user', targetId: userId, ip: req.ip });
 
   res.status(201).json({
-    message: 'Registration successful. You can now log in.',
+    message: 'Registration successful.',
   });
 }
 
@@ -135,9 +135,15 @@ function registerStaff(req, res) {
 
   const passwordHash = bcrypt.hashSync(password, SALT_ROUNDS);
 
+  // Every staff account starts as 'pending_approval': an administrator must
+  // approve it before the login endpoint will let the person in at all (see
+  // the login handler). Approval additionally gates publishing memos, which
+  // stays a teaching-staff privilege only.
+  const staffStatus = 'pending_approval';
+
   const insertUser = db.prepare(`
     INSERT INTO users (role, email, password_hash, first_name, last_name, other_name, phone, push_enabled, status, staff_type, email_verified)
-    VALUES ('staff', ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?, ?)
+    VALUES ('staff', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertProfile = db.prepare(`
     INSERT INTO staff_profiles (user_id, staff_number, faculty_id, department_id)
@@ -158,6 +164,7 @@ function registerStaff(req, res) {
     const result = insertUser.run(
       email.toLowerCase().trim(), passwordHash, firstName.trim(), lastName.trim(),
       otherName ? otherName.trim() : null, phone || null, enablePush ? 1 : 0,
+      staffStatus,
       staffType === 'non_academic' ? 'non_academic' : 'academic',
       1
     );
@@ -169,14 +176,17 @@ function registerStaff(req, res) {
   const userId = tx();
 
   // Email verification is disabled (see registerStudent above): the account
-  // is created email_verified = 1 and can log in right away. The welcome
-  // email is a courtesy only. Administrator approval for publishing memos
-  // remains a separate, unrelated workflow.
-  emailService.sendWelcomeEmail(email.toLowerCase().trim(), firstName.trim(), `${baseUrl(req)}/login.html`);
+  // is created email_verified = 1. Logging in, however, waits for the
+  // administrator's approval (see the login handler), so the welcome email
+  // tells staff to expect that step instead of pointing them at the login
+  // page right away.
+  emailService.sendWelcomeEmail(email.toLowerCase().trim(), firstName.trim(), `${baseUrl(req)}/login.html`, true);
   logAction({ actor: null, action: 'staff.register', targetType: 'user', targetId: userId, ip: req.ip });
 
+  // Plain confirmation only: no post-registration explanation is shown to the
+  // user anywhere (the welcome email already covers anything they need).
   res.status(201).json({
-    message: 'Registration successful. You can now log in. Your account will need administrator approval before you can publish memos.',
+    message: 'Registration successful.',
   });
 }
 
@@ -239,6 +249,12 @@ function login(req, res) {
   // Super Admins have their own separate portal; they can never sign in here.
   if (user.role === 'administrator') {
     return res.status(403).json({ error: 'Super Admin accounts must sign in through the Admin Portal.', adminPortal: true });
+  }
+  // Staff may only sign in once an administrator has approved their account:
+  // freshly registered staff sit in 'pending_approval' and are refused here
+  // until an administrator approves them (students are unaffected).
+  if (user.role === 'staff' && user.status === 'pending_approval') {
+    return res.status(403).json({ error: 'Your staff account has not been approved yet. An administrator must approve your account before you can log in.' });
   }
   // Email verification is disabled system-wide: accounts can sign in whether
   // or not their email address was ever verified. Suspended/disabled checks

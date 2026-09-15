@@ -704,6 +704,14 @@ table.data-table tr:hover td { background: var(--bg); }
 .home-page .landing-eyebrow { margin: 0 0 9px; color: #27824a; font-size: 10.5px; font-weight: 800; letter-spacing: .13em; text-align: center; }
 body.home-page .auth-card h1 { max-width: 390px; margin: 0 auto 13px; font-size: clamp(30px, 5vw, 38px); line-height: 1.12; letter-spacing: -.035em; }
 .home-page .landing-intro { margin: 0 auto 31px; max-width: 385px; color: #607067; text-align: center; line-height: 1.6; }
+/* Login page: headline and supporting line read as one context block, set apart from the form. */
+.home-page .landing-head { margin: 0 0 27px; padding-bottom: 26px; border-bottom: 1px solid #e3ece6; }
+body.home-page .landing-head h1 { max-width: 400px; margin: 0 auto 10px; font-size: clamp(26px, 4.2vw, 33px); line-height: 1.16; letter-spacing: -.03em; }
+.home-page .landing-head .landing-intro { margin: 0 auto; max-width: 400px; font-size: 14.5px; }
+/* The recovery link sits with its field instead of floating above the submit button. */
+.home-page .field-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.home-page .field-link { font-size: 13px; font-weight: 600; color: #176b38; }
+.home-page .field-link:hover { text-decoration: underline; }
 .home-page .field { margin-bottom: 19px; }
 .home-page .landing-register { margin-top: 25px; padding: 15px 16px; border: 1px solid #dbe7df; border-radius: 10px; background: #f6fbf7; color: #607067; text-align: center; font-size: 13.5px; }
 .home-page .landing-register strong { display: block; margin-bottom: 3px; color: #263b2d; }

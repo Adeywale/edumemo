@@ -22,6 +22,11 @@ function updateStaffTypeFields() {
   facultySel.required = academic;
   departmentInput.required = academic;
   if (!academic) { facultySel.value = ''; departmentInput.value = ''; }
+  // Make the send/receive difference explicit before the account is created:
+  // only teaching staff can ever publish memos.
+  document.getElementById('staff-type-hint').textContent = academic
+    ? 'Teaching staff can create, draft and publish memos to targeted students. Every staff account must be approved by an administrator before it can log in.'
+    : 'Non-teaching staff can receive and read memos, but cannot create or send them. Every staff account must be approved by an administrator before it can log in.';
 }
 staffTypeInputs.forEach(input => input.addEventListener('change', updateStaffTypeFields));
 updateStaffTypeFields();
@@ -55,7 +60,6 @@ document.getElementById('reg-form').addEventListener('submit', async event => {
   event.preventDefault(); const form = event.currentTarget; if (!form.checkValidity()) return form.reportValidity();
   const alertRegion = document.getElementById('alert-region'); const btn = document.getElementById('reg-btn'); alertRegion.innerHTML = ''; btn.disabled = true;
   try { const res = await Api.post('/api/auth/register/staff', { firstName: document.getElementById('firstName').value.trim(), lastName: document.getElementById('lastName').value.trim(), email: document.getElementById('email').value.trim(), phone: document.getElementById('phone').value.trim(), staffType: document.querySelector('input[name="staffType"]:checked').value, facultyId: facultySel.value, departmentName: departmentInput.value.trim(), password: document.getElementById('password').value, confirmPassword: document.getElementById('confirmPassword').value, enablePush: document.getElementById('enablePush').checked });
-    const pushChosen = document.getElementById('enablePush').checked;
-    const msg = res.message + (pushChosen ? '<br><br>🔔 After your first sign-in, open <strong>Settings → Notification Preferences</strong> and tick “Web push notifications” — the browser will ask for permission and finish enabling it on this device.' : '');
+    const msg = res.message;
     alertRegion.innerHTML = `<div class="alert alert-success">${msg}</div>`; form.reset(); updateStaffTypeFields(); btn.textContent = 'Account created'; } catch (err) { alertRegion.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`; btn.disabled = false; btn.textContent = 'Create staff account'; }
 });

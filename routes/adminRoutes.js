@@ -19,6 +19,9 @@ router.post('/staff/:id/broadcast-permission', admin.toggleStaffBroadcastPermiss
 router.put('/staff/:id/type', admin.updateStaffType);
 router.post('/students/:id/suspend', admin.suspendStudent);
 router.post('/students/:id/reactivate', admin.reactivateStudent);
+// Permanent account removal for students and staff (administrators are refused
+// by the controller, so the Super Admin account itself can never be deleted).
+router.delete('/users/:id', admin.deleteUser);
 
 router.get('/memo-records', admin.memoRecords);
 router.get('/audit-logs', admin.listAuditLogs);

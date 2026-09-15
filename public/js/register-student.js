@@ -190,10 +190,7 @@ form.addEventListener('submit', async (e) => {
       password: document.getElementById('password').value, confirmPassword: document.getElementById('confirmPassword').value,
       enablePush: document.getElementById('enablePush').checked,
     });
-    const pushChosen = document.getElementById('enablePush').checked;
-    const msg = res.message + (pushChosen
-      ? '<br><br>🔔 After your first sign-in, open <strong>Settings → Notification Preferences</strong> and tick “Web push notifications” — the browser will ask for permission and finish enabling it on this device.'
-      : '');
+    const msg = res.message;
     alertRegion.innerHTML = `<div class="alert alert-success">${msg}</div>`;
     form.reset();
     btn.textContent = 'Account created';

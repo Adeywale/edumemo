@@ -97,7 +97,14 @@ const App = (() => {
     const roleEl = document.getElementById('sidebar-user-role');
     if (nameEl) nameEl.textContent = `${user.firstName} ${user.lastName}`;
     if (roleEl) {
-      const roleLabels = { student: 'Student', staff: user.status === 'pending_approval' ? 'Staff · Pending approval' : 'Staff', administrator: 'Super Admin' };
+      // Staff accounts are labelled by type under the user's name. Non-teaching
+      // staff can only receive memos, so they are never labelled as publishers.
+      const staffLabel = user.staffType === 'non_academic' ? 'Non-teaching staff' : 'Teaching staff';
+      const roleLabels = {
+        student: 'Student',
+        staff: user.status === 'pending_approval' ? `${staffLabel} · Pending approval` : staffLabel,
+        administrator: 'Super Admin',
+      };
       roleEl.textContent = roleLabels[user.role] || user.role;
     }
     if (user.role === 'staff' && user.staffType === 'non_academic') {

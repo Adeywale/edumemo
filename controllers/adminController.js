@@ -1,6 +1,9 @@
+const path = require('path');
+const fs = require('fs');
 const db = require('../database/db');
 const { logAction } = require('../utils/audit');
 const emailService = require('../services/emailService');
+const { UPLOAD_DIR } = require('../middleware/upload');
 
 // ---------------- DASHBOARD OVERVIEW ----------------
 function overview(req, res) {
@@ -110,7 +113,8 @@ function listUsers(req, res) {
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = db.prepare(`
     SELECT u.id, u.role, u.email, u.first_name, u.last_name, u.status, u.staff_type, u.email_verified, u.created_at,
-           sp.matric_number, stp.staff_number
+           sp.matric_number, stp.staff_number,
+           (SELECT COUNT(*) FROM memos m WHERE m.sender_id = u.id) AS memo_count
     FROM users u
     LEFT JOIN student_profiles sp ON sp.user_id = u.id
     LEFT JOIN staff_profiles stp ON stp.user_id = u.id
@@ -127,6 +131,7 @@ function getUserDetails(req, res) {
   const row = db.prepare(`
     SELECT u.id, u.role, u.email, u.first_name, u.last_name, u.other_name, u.phone,
            u.status, u.staff_type, u.email_verified, u.created_at,
+           (SELECT COUNT(*) FROM memos m WHERE m.sender_id = u.id) AS memo_count,
            sp.matric_number,
            f.name AS faculty_name, d.name AS department_name,
            p.name AS programme_name, l.name AS level_name, sm.name AS study_mode_name,
@@ -219,6 +224,106 @@ function reactivateStudent(req, res) {
   res.json({ message: 'Student account reactivated.' });
 }
 
+// ---------------- DELETE ACCOUNT (student or staff, permanent) ----------------
+// Removes the account and every row that belongs to it. Administrators are
+// never deletable through this endpoint, so a Super Admin cannot wipe a peer
+// account (or its own) either by mistake or through a crafted request.
+//
+// Child rows are deleted explicitly inside one transaction rather than relying
+// on ON DELETE CASCADE -- the sql.js runtime does not reliably enforce foreign
+// keys, and orphaned rows would leave the account visible in other users'
+// inboxes, reports and notification counts (the same reasoning memoController
+// documents for permanent memo deletion).
+function deleteUser(req, res) {
+  const userId = Number(req.params.id);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid account reference.' });
+  }
+
+  const user = db.prepare(`SELECT id, role, email, first_name, last_name, status FROM users WHERE id = ?`).get(userId);
+  if (!user) return res.status(404).json({ error: 'Account not found.' });
+  if (!['student', 'staff'].includes(user.role)) {
+    return res.status(403).json({ error: 'Only student and staff accounts can be deleted.' });
+  }
+
+  // Attachments are files on disk, so record their names before the rows that
+  // reference them are gone and unlink them once the transaction has committed.
+  const attachments = db.prepare(`
+    SELECT ma.stored_filename FROM memo_attachments ma
+    JOIN memos m ON m.id = ma.memo_id
+    WHERE m.sender_id = ?
+  `).all(userId);
+  const memoCount = db.prepare(`SELECT COUNT(*) as c FROM memos WHERE sender_id = ?`).get(userId).c;
+
+  // The sessions table stores each session as a JSON blob with no user_id
+  // column, so rows are matched by reading the stored user id. This signs the
+  // deleted account out on every device immediately instead of leaving a live
+  // session pointing at a user that no longer exists.
+  const sessionIds = db.prepare(`SELECT sid, data FROM sessions`).all().reduce((ids, row) => {
+    try {
+      const parsed = JSON.parse(row.data);
+      if (parsed && parsed.user && Number(parsed.user.id) === userId) ids.push(row.sid);
+    } catch (_) { /* malformed session payload -- nothing to match */ }
+    return ids;
+  }, []);
+
+  db.transaction(() => {
+    // 1. Everything hanging off memos this account sent (staff accounts only).
+    db.prepare(`DELETE FROM notifications WHERE memo_id IN (SELECT id FROM memos WHERE sender_id = ?)`).run(userId);
+    db.prepare(`DELETE FROM email_notifications WHERE memo_id IN (SELECT id FROM memos WHERE sender_id = ?)`).run(userId);
+    db.prepare(`DELETE FROM memo_recipients WHERE memo_id IN (SELECT id FROM memos WHERE sender_id = ?)`).run(userId);
+    db.prepare(`DELETE FROM memo_target_rules WHERE memo_id IN (SELECT id FROM memos WHERE sender_id = ?)`).run(userId);
+    db.prepare(`DELETE FROM memo_attachments WHERE memo_id IN (SELECT id FROM memos WHERE sender_id = ?)`).run(userId);
+    db.prepare(`DELETE FROM memos WHERE sender_id = ?`).run(userId);
+
+    // 2. Rows addressed to the account itself: inbox, notifications, devices, tokens.
+    db.prepare(`DELETE FROM memo_recipients WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM notifications WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM email_notifications WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM push_subscriptions WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM verification_tokens WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM password_reset_tokens WHERE user_id = ?`).run(userId);
+
+    // 3. Registration profile and course registrations.
+    db.prepare(`DELETE FROM student_courses WHERE student_id = ?`).run(userId);
+    db.prepare(`DELETE FROM staff_courses WHERE staff_id = ?`).run(userId);
+    db.prepare(`DELETE FROM student_profiles WHERE user_id = ?`).run(userId);
+    db.prepare(`DELETE FROM staff_profiles WHERE user_id = ?`).run(userId);
+
+    // 4. The audit trail is history, not account data: keep the rows, drop the
+    //    reference to the account that no longer exists.
+    db.prepare(`UPDATE audit_logs SET actor_id = NULL WHERE actor_id = ?`).run(userId);
+
+    // 5. End every live session, then the account row itself.
+    for (const sid of sessionIds) db.prepare(`DELETE FROM sessions WHERE sid = ?`).run(sid);
+    db.prepare(`DELETE FROM users WHERE id = ?`).run(userId);
+  })();
+
+  for (const attachment of attachments) {
+    const p = path.join(UPLOAD_DIR, attachment.stored_filename);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  }
+
+  logAction({
+    actor: req.session.user,
+    action: `${user.role}.delete`,
+    targetType: 'user',
+    targetId: userId,
+    details: {
+      email: user.email,
+      name: `${user.first_name} ${user.last_name}`.trim(),
+      status: user.status,
+      memosDeleted: memoCount,
+    },
+    ip: req.ip,
+  });
+
+  res.json({
+    message: user.role === 'student' ? 'Student account deleted permanently.' : 'Staff account deleted permanently.',
+    memosDeleted: memoCount,
+  });
+}
+
 // ---------------- MEMO RECORDS (full history, staff cannot delete) ----------------
 function memoRecords(req, res) {
   // Delegates to the same rich query used by memoController.listMemos for the
@@ -279,6 +384,6 @@ function updateSettings(req, res) {
 
 module.exports = {
   overview, reports, listUsers, getUserDetails, approveStaff, suspendStaff, reactivateStaff, toggleStaffBroadcastPermission, updateStaffType,
-  suspendStudent, reactivateStudent,
+  suspendStudent, reactivateStudent, deleteUser,
   memoRecords, listAuditLogs, getSettings, updateSettings,
 };

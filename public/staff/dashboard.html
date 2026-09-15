@@ -18,48 +18,58 @@
   App.loadInstitutionBranding();
   const content = App.renderShell({ role: 'staff', showSearch: false });
   App.initUserChrome(user);
-  App.maybePromptPushSetup();
-  if (user.staffType === 'non_academic') {
-    window.location.replace('/staff/memos.html?tab=received');
-    return;
-  }
+
+  // Two different staff experiences share this dashboard:
+  //  * teaching staff    -> can draft/publish memos to students
+  //  * non-teaching staff -> receive-only; no compose/send actions anywhere
+  const isTeaching = user.staffType === 'academic';
+  const staffLabel = isTeaching ? 'Teaching staff' : 'Non-teaching staff';
 
   content.innerHTML = `
-    <div class="panel-header"><h1>Welcome, ${App.escapeHtml(user.firstName)}</h1></div>
-    ${user.status === 'pending_approval' ? `<div class="alert alert-info">Your staff account is awaiting administrator approval. You can prepare drafts now, but publishing is disabled until you're approved.</div>` : ''}
-    ${user.status === 'suspended' ? `<div class="alert alert-error">Your staff account has been suspended. Contact administration for details.</div>` : ''}
-
-    <div class="panel">
-      <div class="panel-header"><h2>Quick actions</h2></div>
-      <div style="display:flex; gap:12px; flex-wrap:wrap;">
-        <a class="btn btn-primary" href="/staff/create-memo.html">✏️ Create Memo</a>
-        <a class="btn btn-secondary" href="/staff/memos.html?tab=drafts">View Drafts</a>
-        <a class="btn btn-secondary" href="/staff/memos.html?tab=sent">View Sent Memos</a>
+    <div class="panel-header">
+      <div>
+        <h1 style="margin:0;">Welcome, ${App.escapeHtml(user.firstName)}</h1>
+        <p class="muted" style="margin:4px 0 0; font-size:13px;">${staffLabel}</p>
       </div>
     </div>
 
     <div class="panel">
-      <div class="panel-header"><h2>Recent activity</h2></div>
+      <div class="panel-header"><h2>Quick actions</h2></div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
+        ${isTeaching
+          ? `<a class="btn btn-primary" href="/staff/create-memo.html">✏️ Create Memo</a>
+             <a class="btn btn-secondary" href="/staff/memos.html?tab=drafts">View Drafts</a>
+             <a class="btn btn-secondary" href="/staff/memos.html?tab=sent">View Sent Memos</a>`
+          : '<a class="btn btn-primary" href="/staff/memos.html?tab=received">📥 View Received Memos</a>'}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>${isTeaching ? 'Recent activity' : 'Recent memos'}</h2></div>
       <div id="recent-region"><div class="empty-state"><span class="spinner" style="border-top-color:var(--green); border-color:var(--border);"></span></div></div>
     </div>
   `;
 
   try {
-    const { memos } = await Api.get('/api/memos?page=1');
+    const { memos } = await Api.get(isTeaching ? '/api/memos?page=1' : '/api/memos?filter=received&page=1');
     const recentRegion = document.getElementById('recent-region');
     if (memos.length === 0) {
-      recentRegion.innerHTML = `<div class="empty-state"><div class="emoji">📝</div><h3>No memos sent yet</h3><p>Create your first memo to get started.</p></div>`;
+      recentRegion.innerHTML = isTeaching
+        ? '<div class="empty-state"><div class="emoji">📝</div><h3>No memos sent yet</h3><p>Create your first memo to get started.</p></div>'
+        : '<div class="empty-state"><div class="emoji">📥</div><h3>No memos received yet</h3><p>Memos published to you will appear here.</p></div>';
     } else {
       recentRegion.innerHTML = `<div class="list">${memos.slice(0, 6).map(m => `
         <div class="list-row" onclick="window.location.href='/memo.html?id=${m.id}'">
           <div class="row-main">
             <div class="row-title">${App.escapeHtml(m.title)}</div>
             <div class="row-meta">
-              <span class="badge ${m.status === 'published' ? 'badge-green' : m.status === 'archived' ? 'badge-grey' : 'badge-amber'}">${m.status}</span>
+              ${isTeaching
+                ? `<span class="badge ${m.status === 'published' ? 'badge-green' : m.status === 'archived' ? 'badge-grey' : 'badge-amber'}">${m.status}</span>`
+                : `${m.sender_name ? `<span>${App.escapeHtml(m.sender_name)}</span>` : ''}${m.is_read ? '' : '<span class="badge badge-amber">New</span>'}`}
               ${m.category_name ? `<span>${App.escapeHtml(m.category_name)}</span>` : ''}
             </div>
           </div>
-          <div class="row-side">${App.timeAgo(m.created_at)}</div>
+          <div class="row-side">${App.timeAgo(m.published_at || m.created_at)}</div>
         </div>`).join('')}</div>`;
     }
   } catch (err) { App.showError(err); }

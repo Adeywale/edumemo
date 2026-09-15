@@ -21,13 +21,15 @@
 
   const params = new URLSearchParams(window.location.search);
   const state = { filter: params.get('tab') || (user.staffType === 'non_academic' ? 'received' : 'sent'), page: 1 };
+  // Non-teaching staff are receive-only: every other tab collapses to Received.
   if (user.staffType === 'non_academic' && state.filter !== 'received') state.filter = 'received';
+  const canPublish = user.staffType === 'academic';
 
   content.innerHTML = `
-    <div class="panel-header"><h1>My Memos</h1>${user.staffType === 'academic' ? '<a href="/staff/create-memo.html" class="btn btn-primary">Create Memo</a>' : ''}</div>
+    <div class="panel-header"><h1>My Memos</h1>${canPublish ? '<a href="/staff/create-memo.html" class="btn btn-primary">Create Memo</a>' : ''}</div>
     <div class="tabs" id="tabs">
       <button class="tab-btn" data-filter="received">Received</button>
-      ${user.staffType === 'academic' ? '<button class="tab-btn" data-filter="sent">Sent</button><button class="tab-btn" data-filter="drafts">Drafts</button><button class="tab-btn" data-filter="archived">Archived</button>' : ''}
+      ${canPublish ? '<button class="tab-btn" data-filter="sent">Sent</button><button class="tab-btn" data-filter="drafts">Drafts</button><button class="tab-btn" data-filter="archived">Archived</button>' : ''}
     </div>
     <div id="list-region"></div>
   `;

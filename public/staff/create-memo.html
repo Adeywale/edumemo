@@ -27,7 +27,6 @@
 
   content.innerHTML = `
     <div class="panel-header"><h1>${editId ? 'Edit Draft' : 'Create Memo'}</h1></div>
-    ${user.status !== 'active' ? '<div class="alert alert-info">You can save drafts now, but publishing requires an approved staff account.</div>' : ''}
 
     <div class="panel">
       <div class="field"><label for="title">Memo Title *</label><input type="text" id="title" required maxlength="200"></div>

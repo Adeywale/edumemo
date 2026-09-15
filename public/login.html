@@ -14,9 +14,10 @@
       <img src="/images/logo.png" alt="Institution logo">
       <span data-institution-name>EduMemo</span>
     </div>
-    <p class="landing-eyebrow">ONE PLACE. EVERY OFFICIAL UPDATE.</p>
-    <h1>Never miss an important campus memo.</h1>
-    <p class="landing-intro">EduMemo delivers verified academic notices, deadlines, and announcements directly to the students and staff they concern.</p>
+    <header class="landing-head">
+      <h1>Never miss an important campus memo.</h1>
+      <p class="landing-intro">EduMemo delivers verified academic notices, deadlines, and announcements directly to the students and staff they concern.</p>
+    </header>
 
     <div id="alert-region"></div>
 
@@ -26,16 +27,16 @@
         <input type="email" id="email" name="email" required autocomplete="off" readonly>
       </div>
       <div class="field">
-        <label for="password">Password</label>
+        <div class="field-label-row">
+          <label for="password">Password</label>
+          <a class="field-link" href="/forgot-password.html">Forgot password?</a>
+        </div>
         <div class="password-control">
           <input type="password" id="password" name="password" required autocomplete="new-password" readonly>
           <button type="button" class="password-toggle" id="password-toggle" aria-label="Show password" aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           </button>
         </div>
-      </div>
-      <div style="display:flex; justify-content:flex-end; margin-bottom:18px;">
-        <a href="/forgot-password.html" style="font-size:13px;">Forgot password?</a>
       </div>
       <button type="submit" class="btn btn-primary btn-block" id="login-btn">Access your account <span aria-hidden="true">→</span></button>
     </form>
@@ -55,6 +56,7 @@
   const form = document.getElementById('login-form');
   const alertRegion = document.getElementById('alert-region');
   const btn = document.getElementById('login-btn');
+  const btnLabel = btn.innerHTML;
   const emailInput = document.getElementById('email');
   const passwordInput = document.getElementById('password');
   const passwordToggle = document.getElementById('password-toggle');
@@ -89,7 +91,7 @@
     } catch (err) {
       alertRegion.innerHTML = `<div class="alert alert-error">${App.escapeHtml(err.message)}</div>`;
       btn.disabled = false;
-      btn.textContent = 'Log in';
+      btn.innerHTML = btnLabel;
     }
   });
 </script>

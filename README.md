@@ -83,8 +83,9 @@ memo categories, and the following **demo accounts**:
 | Role | Email | Password | Notes |
 |---|---|---|---|
 | Administrator | `admin@example.edu` (or `SEED_ADMIN_EMAIL`) | `ChangeMe123!` (or `SEED_ADMIN_PASSWORD`) | Full system access |
-| Staff (approved) | `staff.demo@example.edu` | `Password123!` | Can publish memos immediately |
-| Staff (pending) | `staff.pending@example.edu` | `Password123!` | Demonstrates the approval workflow — cannot publish until an admin approves |
+| Staff — teaching (approved) | `staff.demo@example.edu` | `Password123!` | Can publish memos immediately |
+| Staff — teaching (pending) | `staff.pending@example.edu` | `Password123!` | Demonstrates the approval workflow — cannot log in until an admin approves |
+| Staff — non-teaching | (register one from `/register-staff.html`) | — | Receive-only: also needs admin approval before the first login; can never create or send memos |
 | Students | `csc.2023.001@example.edu`, `csc.2022.014@example.edu`, `eee.2023.007@example.edu`, `eee.2021.033@example.edu`, `eng.2023.019@example.edu` | `Password123!` | Spread across faculties/levels/courses for testing targeted memos |
 
 **Change or remove these credentials before any production deployment.** The seed
@@ -280,8 +281,16 @@ edumemo/
 There is no automated test suite (out of scope for this build), but the system has
 been manually verified end-to-end, including:
 
-- Student, staff registration → welcome email → login (no email verification required)
-- Staff approval workflow (pending staff cannot publish until approved)
+- Student registration → welcome email → login (no email verification required)
+- Staff registration → welcome email → **administrator approval** → login (no email
+  verification required; every new staff account starts as `pending_approval`)
+- Staff approval workflow: unapproved staff cannot log in at all, and — once approved —
+  publishing memos stays reserved for **teaching** staff (non-teaching staff can never
+  publish because they are receive-only)
+- **Receive-only non-teaching staff**: they can read the memos addressed to them,
+  but every create/edit/publish/resend/archive/delete memo endpoint returns 403.
+  The rule is enforced by `requireMemoPublisher` in the route layer *and* repeated
+  in `memoController`, so the UI is never the only guard.
 - Draft creation with file attachment → edit → preview → publish
 - Combinable recipient targeting (e.g. **Course = GST 102 AND Level = 100 Level**)
   resolving to exactly the matching students, verified against seed data
@@ -299,6 +308,15 @@ been manually verified end-to-end, including:
 
 To exercise these yourself, run `npm run seed`, then `npm start`, and log in with the
 demo accounts in section 6.
+
+`npm run check:staff-permissions` verifies the staff rules above automatically: it
+boots its own server on port 3211 against a **throwaway database** (the real
+`database/database.sqlite` is never touched), asserts that every newly registered
+staff account (teaching and non-teaching) starts as `pending_approval` and cannot
+log in until an administrator approves it, that every memo-writing endpoint refuses
+non-teaching staff, that memos targeted at them still arrive once approved, and
+that approved teaching staff can create and publish memos. No seed data or
+already-running server is required.
 
 ## 15. Troubleshooting
 

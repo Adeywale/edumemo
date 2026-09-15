@@ -43,8 +43,14 @@ class Client {
       if (!this.csrf) {
         const r0 = await fetch(`${BASE}/api/csrf-token`, { headers });
         const j0 = await r0.json();
-        this.csrf = j0.csrfToken;
+        // Capture the session cookie FIRST: the very first call establishes
+        // the session id, and captureCookies() drops the cached CSRF token
+        // whenever the session id changes. Assigning the token afterwards
+        // keeps it paired with the session it actually belongs to (otherwise
+        // a client whose first call is a POST sends a null token and the
+        // server answers 403 "Invalid or missing security token").
         this.captureCookies(r0);
+        this.csrf = j0.csrfToken;
         // The CSRF fetch populated the cookie jar; make sure the follow-up
         // request actually carries it (browsers do this automatically,
         // Node fetch does not).

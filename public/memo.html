@@ -21,7 +21,11 @@
   const params = new URLSearchParams(window.location.search);
   const memoId = params.get('id');
 
-  const backHref = { student: '/student/dashboard.html', staff: '/staff/memos.html?tab=sent', administrator: '/admin/memo-records.html' }[user.role];
+  const backHref = {
+    student: '/student/dashboard.html',
+    staff: user.staffType === 'non_academic' ? '/staff/memos.html?tab=received' : '/staff/memos.html?tab=sent',
+    administrator: '/admin/memo-records.html',
+  }[user.role];
 
   content.innerHTML = `
     <a href="${backHref}" class="muted" style="font-size:13px; display:inline-block; margin-bottom:14px;">&larr; Back</a>

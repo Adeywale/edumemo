@@ -101,6 +101,34 @@ async function main() {
   const app = express();
   app.set('trust proxy', 1);
 
+  // -------------------------------------------------------------------
+  // ONE-TIME DATABASE IMPORT (guarded).
+  // Active only while the IMPORT_TOKEN environment variable is set; the
+  // request must present it in the x-import-token header. Accepts a raw
+  // SQLite database file, hot-swaps the in-memory sql.js instance, and
+  // persists it to DATABASE_PATH. Disabled by deleting IMPORT_TOKEN and
+  // restarting the service.
+  // -------------------------------------------------------------------
+  app.post('/__import-db', express.raw({ type: () => true, limit: '25mb' }), (req, res) => {
+    const provided = req.get('x-import-token');
+    if (!process.env.IMPORT_TOKEN || !provided || provided !== process.env.IMPORT_TOKEN) {
+      return res.status(403).json({ error: 'Forbidden.' });
+    }
+    if (!Buffer.isBuffer(req.body) || req.body.length < 512) {
+      return res.status(400).json({ error: 'Request body must be a SQLite database file.' });
+    }
+    try {
+      db.reloadFromBuffer(req.body);
+      const { n: userCount } = db.prepare('SELECT COUNT(*) AS n FROM users').get();
+      const { n: memoCount } = db.prepare('SELECT COUNT(*) AS n FROM memos').get();
+      console.log(`Database imported: ${userCount} users, ${memoCount} memos.`);
+      res.json({ ok: true, users: userCount, memos: memoCount });
+    } catch (err) {
+      console.error('Database import failed:', err.message);
+      res.status(500).json({ error: 'Import failed: ' + err.message });
+    }
+  });
+
   // ---------------- SECURITY HEADERS ----------------
   app.use(helmet({
     contentSecurityPolicy: {

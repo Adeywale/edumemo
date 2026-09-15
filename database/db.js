@@ -184,6 +184,10 @@ class SqlJsDatabase {
 
 let readyPromise = null;
 let instance = null;
+// Set during init(); swaps the live in-memory sql.js database for the one in
+// the provided Buffer and points the persistence closure at the new instance.
+// Used only by the guarded, temporary /__import-db route in server.js.
+let reloadInternal = null;
 
 function requireReady() {
   if (!instance) {
@@ -218,6 +222,15 @@ function init() {
     };
 
     instance = new SqlJsDatabase(rawDb, persistToDisk);
+    reloadInternal = (bytes) => {
+      if (instance.txDepth !== 0) {
+        throw new Error('Cannot reload the database while a transaction is open.');
+      }
+      const fresh = new SQL.Database(bytes);
+      fresh.exec('PRAGMA foreign_keys = ON');
+      rawDb = fresh;
+      instance.raw = fresh;
+    };
     return instance;
   })();
 
@@ -236,6 +249,10 @@ module.exports = {
   exec: (sql) => requireReady().exec(sql),
   pragma: (clause) => requireReady().pragma(clause),
   transaction: (fn) => requireReady().transaction(fn),
+  reloadFromBuffer: (bytes) => {
+    if (!reloadInternal) throw new Error('Database not initialized yet.');
+    reloadInternal(bytes);
+  },
   get dbPath() { return dbPath; },
   get isPersistent() { return isPersistent; },
 };

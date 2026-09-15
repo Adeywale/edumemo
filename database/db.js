@@ -230,6 +230,9 @@ function init() {
       fresh.exec('PRAGMA foreign_keys = ON');
       rawDb = fresh;
       instance.raw = fresh;
+      // Persist immediately: without this, the swapped-in database lives only
+      // in memory and the next process restart would reload the old file.
+      persistToDisk();
     };
     return instance;
   })();

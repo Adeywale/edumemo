@@ -3,6 +3,7 @@ const fs = require('fs');
 const db = require('../database/db');
 const { logAction } = require('../utils/audit');
 const emailService = require('../services/emailService');
+const pushService = require('../services/pushService');
 const { UPLOAD_DIR } = require('../middleware/upload');
 
 // ---------------- DASHBOARD OVERVIEW ----------------
@@ -82,10 +83,15 @@ function reports(req, res) {
 
   // Email delivery visibility: aggregate + recent failures so silent SMTP
   // problems (e.g. invalid app passwords) are never invisible to admins.
+  // `skipped` counts attempts that were never actually handed to an SMTP
+  // server (SMTP not configured on this deployment). Those must be visible:
+  // they used to be recorded as "sent", which made a completely undeliverable
+  // configuration look healthy in this report.
   const emailStats = {
     total: db.prepare(`SELECT COUNT(*) as c FROM email_notifications`).get().c,
     sent: db.prepare(`SELECT COUNT(*) as c FROM email_notifications WHERE status = 'sent'`).get().c,
     failed: db.prepare(`SELECT COUNT(*) as c FROM email_notifications WHERE status = 'failed'`).get().c,
+    skipped: db.prepare(`SELECT COUNT(*) as c FROM email_notifications WHERE status = 'skipped'`).get().c,
   };
   const recentEmailFailures = db.prepare(`
     SELECT en.id, en.memo_id, en.to_email, en.subject, en.error, en.created_at
@@ -359,9 +365,10 @@ function listAuditLogs(req, res) {
 function getSettings(req, res) {
   const rows = db.prepare(`SELECT key, value FROM system_settings`).all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  res.json({
+    res.json({
     settings,
     emailConfigured: emailService.isConfigured,
+    pushConfigured: pushService.isConfigured,
     institutionName: process.env.INSTITUTION_NAME || 'EduMemo',
   });
 }

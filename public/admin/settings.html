@@ -20,10 +20,16 @@
   content.innerHTML = `
     <div class="panel-header"><h1>System Settings</h1></div>
 
-    <div class="panel">
+        <div class="panel">
       <div class="panel-header"><h2>Email (SMTP) Status</h2></div>
       <div id="email-status"></div>
       <p class="field-hint">SMTP credentials are configured via environment variables (.env) on the server, not through this interface, so institutional email credentials are never exposed in application code or the database. See the README for setup instructions.</p>
+    </div>
+
+    <div class="panel">
+      <div class="panel-header"><h2>Web Push (VAPID) Status</h2></div>
+      <div id="push-status"></div>
+      <p class="field-hint">VAPID keys and the push sender identity are configured via environment variables (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT) on the server. Generate a key pair once with <code>npx web-push generate-vapid-keys</code> and add them to the environment. When configured, students and staff who enable web push in their Settings will receive browser push notifications for new memos even when the website is closed.</p>
     </div>
 
     <div class="panel">
@@ -55,12 +61,15 @@
     </div>
   `;
 
-  try {
-    const { emailConfigured, institutionName } = await Api.get('/api/admin/settings');
+          try {
+    const { emailConfigured, pushConfigured, institutionName } = await Api.get('/api/admin/settings');
     document.getElementById('inst-name').textContent = institutionName;
     document.getElementById('email-status').innerHTML = emailConfigured
       ? '<span class="badge badge-green">Configured</span> Emails are being sent via the configured SMTP server.'
       : '<span class="badge badge-amber">Not configured</span> Emails are currently logged to the server console instead of being sent (development mode).';
+    document.getElementById('push-status').innerHTML = pushConfigured
+      ? '<span class="badge badge-green">Configured</span> Web push notifications are working — subscribed users will receive browser alerts for new memos even when EduMemo is closed.'
+      : '<span class="badge badge-amber">Not configured</span> Web push notifications are disabled. Set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT to enable them.';
   } catch (err) { App.showError(err); }
 
   try {

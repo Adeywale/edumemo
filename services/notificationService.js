@@ -41,6 +41,9 @@ async function notifyMemoRecipients(memo, baseUrl, options = {}) {
 
   let pushSentCount = 0;
   let emailSentCount = 0;
+  let emailSkippedCount = 0;
+  let emailFailedCount = 0;
+  const deliveryErrors = [];
 
   // In-app notification rows are cheap synchronous DB writes -- create all
   // of them up front so every recipient sees the memo in-app immediately,
@@ -64,35 +67,58 @@ async function notifyMemoRecipients(memo, baseUrl, options = {}) {
       const name = `${r.first_name} ${r.last_name}`;
       let pushSent = false;
       let pushRecord = null;
-
-      // Only attempt a web push when the recipient actually has a device
-      // subscribed (see the query note above). Users who merely opted in at
-      // registration but never completed the browser subscription are simply
-      // not attempted -- no bogus "failed" rows in their notification history.
-      if (r.subscription_count > 0) {
-        const result = await pushService.sendPushToUser(r.id, {
-          title: memo.title,
-          body: `A new memo has been published.`,
-          url: memoUrl,
-        });
-        if (result.skipped) {
-          pushRecord = ['skipped', 'Push not configured on server'];
-        } else if (result.sent > 0) {
-          pushSent = true;
-          pushRecord = ['sent', null];
-        } else if (result.noSubscriptions) {
-          pushRecord = ['skipped', 'No device is currently subscribed'];
-        } else {
-          pushRecord = ['failed', 'Push service rejected the subscription'];
+      try {
+        // Only attempt a web push when the recipient actually has a device
+        // subscribed (see the query note above). Users who merely opted in at
+        // registration but never completed the browser subscription are simply
+        // not attempted -- no bogus "failed" rows in their notification history.
+        if (r.subscription_count > 0) {
+                              const result = await pushService.sendPushToUser(r.id, {
+            title: memo.title,
+            body: `A new memo has been published.`,
+            url: memoUrl,
+            memoId: memo.id,
+          });
+          if (result.skipped) {
+            pushRecord = ['skipped', result.reason || 'Push not configured on server'];
+          } else if (result.sent > 0) {
+            pushSent = true;
+            pushRecord = ['sent', null];
+          } else if (result.noSubscriptions) {
+            pushRecord = ['skipped', result.reason || 'No device is currently subscribed'];
+          } else {
+            pushRecord = ['failed', result.reason || 'Push service rejected the subscription'];
+          }
         }
+
+        const emailResult = await emailService.sendMemoNotificationEmail(r.email, name, {
+          title: memo.title,
+          senderName: memo.senderName,
+        }, memoUrl);
+
+        return {
+          r, pushSent, pushRecord,
+          emailOk: emailResult.ok,
+          emailSkipped: !!emailResult.skipped,
+          emailError: emailResult.error,
+        };
+      } catch (err) {
+        // A failure for ONE recipient must never abort the fan-out: before,
+        // a single unexpected error (an unreachable push endpoint, a bad
+        // address, ...) rejected the whole batch and every remaining recipient
+        // silently received no email and no push at all. It is now recorded
+        // as that recipient's failure and the rest of the memo still goes out.
+        console.error(`Memo #${memo.id} delivery to ${r.email || `user #${r.id}`} failed:`, err.message);
+        deliveryErrors.push(`${r.email || `user #${r.id}`}: ${err.message}`);
+        return {
+          r,
+          pushSent: false,
+          pushRecord: pushRecord || ['failed', err.message],
+          emailOk: false,
+          emailSkipped: false,
+          emailError: err.message,
+        };
       }
-
-      const emailResult = await emailService.sendMemoNotificationEmail(r.email, name, {
-        title: memo.title,
-        senderName: memo.senderName,
-      }, memoUrl);
-
-      return { r, pushSent, pushRecord, emailOk: emailResult.ok, emailError: emailResult.error };
     }));
 
     // DB writes stay on the main thread, sequential, after each batch
@@ -103,16 +129,32 @@ async function notifyMemoRecipients(memo, baseUrl, options = {}) {
         insertPushNotifRecord.run(res.r.id, memo.id, memo.title, 'Web Push notification', res.pushRecord[0], res.pushRecord[1]);
         if (res.pushSent) pushSentCount++;
       }
-      if (res.emailOk) emailSentCount++;
+      // "skipped" is recorded for a delivery that was never handed to a mail
+      // server (SMTP not configured on this deployment). Recording those as
+      // "sent" made a totally undeliverable configuration look successful in
+      // the admin delivery report.
+      if (res.emailSkipped) emailSkippedCount++;
+      else if (res.emailOk) emailSentCount++;
+      else {
+        emailFailedCount++;
+        if (res.emailError) deliveryErrors.push(`${res.r.email || `user #${res.r.id}`}: ${res.emailError}`);
+      }
       insertEmailLog.run(
         res.r.id, memo.id, res.r.email, emailService.memoNotificationSubject(memo.title),
-        res.emailOk ? 'sent' : 'failed',
+        res.emailSkipped ? 'skipped' : (res.emailOk ? 'sent' : 'failed'),
         res.emailOk ? null : (res.emailError || null)
       );
     }
   }
 
-  return { recipientCount: recipients.length, pushSentCount, emailSentCount };
+  return {
+    recipientCount: recipients.length,
+    pushSentCount,
+    emailSentCount,
+    emailSkippedCount,
+    emailFailedCount,
+    deliveryErrors,
+  };
 }
 
 module.exports = { notifyMemoRecipients };

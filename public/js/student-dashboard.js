@@ -6,6 +6,11 @@
   const state = { filter: 'all', page: 1 };
   const content = App.renderShell({ role: 'student', searchPlaceholder: 'Search memos by title, sender or category…', onSearch: value => { searchTerm = value; state.page = 1; load(); } });
   App.initUserChrome(user);
+  // Guidance for accounts that opted into web push but have not registered this
+  // browser yet. It is a no-op when a subscription already exists (including
+  // after the self-healing re-sync in initUserChrome), so it never nags a user
+  // whose push notifications are working.
+  App.maybePromptPushSetup();
   content.innerHTML = `
     <div class="panel-header"><h1>Memos</h1></div>
     <div class="tabs" id="tabs"><button class="tab-btn active" data-filter="all">All</button><button class="tab-btn" data-filter="unread">Unread</button><button class="tab-btn" data-filter="read">Read</button></div>

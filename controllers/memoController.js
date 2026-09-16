@@ -215,7 +215,16 @@ async function publishMemo(req, res) {
   notificationService.notifyMemoRecipients(
     { ...memo, senderName: `${sender.first_name} ${sender.last_name}` }, baseUrl
   ).then((stats) => {
-    console.log(`Memo #${memoId} notifications complete: ${stats.emailSentCount}/${stats.recipientCount} emails, ${stats.pushSentCount} push sent.`);
+    const parts = [
+      `${stats.emailSentCount}/${stats.recipientCount} emails sent`,
+      `${stats.pushSentCount} push sent`,
+    ];
+    if (stats.emailSkippedCount) parts.push(`${stats.emailSkippedCount} email(s) SKIPPED (SMTP not configured)`);
+    if (stats.emailFailedCount) parts.push(`${stats.emailFailedCount} email(s) FAILED`);
+    console.log(`Memo #${memoId} notifications complete: ${parts.join(', ')}.`);
+    if (stats.deliveryErrors.length) {
+      console.error(`Memo #${memoId} delivery problems:\n  - ${stats.deliveryErrors.slice(0, 10).join('\n  - ')}`);
+    }
   }).catch((err) => {
     console.error(`Memo #${memoId} notification delivery failed:`, err);
   });
@@ -351,7 +360,16 @@ function resendMemo(req, res) {
     baseUrl,
     { skipInApp: true }
   ).then((stats) => {
-    console.log(`Memo #${memoId} resend complete: ${stats.emailSentCount}/${stats.recipientCount} emails, ${stats.pushSentCount} push sent.`);
+    const parts = [
+      `${stats.emailSentCount}/${stats.recipientCount} emails sent`,
+      `${stats.pushSentCount} push sent`,
+    ];
+    if (stats.emailSkippedCount) parts.push(`${stats.emailSkippedCount} email(s) SKIPPED (SMTP not configured)`);
+    if (stats.emailFailedCount) parts.push(`${stats.emailFailedCount} email(s) FAILED`);
+    console.log(`Memo #${memoId} resend complete: ${parts.join(', ')}.`);
+    if (stats.deliveryErrors.length) {
+      console.error(`Memo #${memoId} resend delivery problems:\n  - ${stats.deliveryErrors.slice(0, 10).join('\n  - ')}`);
+    }
   }).catch((err) => {
     console.error(`Memo #${memoId} resend delivery failed:`, err);
   });

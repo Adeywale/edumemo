@@ -8,7 +8,10 @@
     "dev": "nodemon server.js",
     "seed": "node database/seed.js",
     "init-db": "node database/init.js",
-    "check:staff-permissions": "node check-staff-memo-permissions.js"
+    "check:staff-permissions": "node check-staff-memo-permissions.js",
+    "check:notifications": "node check-notification-delivery.js",
+    "diag:delivery": "node diag-notifications.js",
+    "test:push": "node test-push-send.js"
   },
   "license": "UNLICENSED",
   "dependencies": {

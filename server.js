@@ -52,10 +52,11 @@ async function main() {
       'WARNING: no DATABASE_PATH/UPLOAD_DIR or RAILWAY_VOLUME_MOUNT_PATH is set, ' +
       'so the database and/or uploaded attachments are being written to the ' +
       'container\'s local disk. On Railway (and most hosts) this is wiped on ' +
-      'every redeploy/restart -- accounts and attachments created now will be ' +
-      'gone after the next deploy. Attach a Railway Volume to fix this ' +
-      'permanently (both paths auto-detect RAILWAY_VOLUME_MOUNT_PATH once one ' +
-      'is attached, no other config needed).'
+      'every redeploy/restart -- accounts, memos, notification history and every ' +
+      'device\'s web-push subscription are lost at once, so recipients stop ' +
+      'receiving memo emails and push alerts until they register again. Attach a ' +
+      'Railway Volume to fix this permanently (both paths auto-detect ' +
+      'RAILWAY_VOLUME_MOUNT_PATH once one is attached, no other config needed).'
     );
   }
   if (isProd && !pushService.isConfigured) {

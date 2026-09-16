@@ -17,23 +17,47 @@ if (isConfigured) {
     // Some networks advertise (or half-route) IPv6 but drop the traffic; pin
     // the SMTP connection to IPv4 so a broken IPv6 path can never stall sends.
     family: 4,
+    // A small pool of reused connections keeps a bulk memo (one message per
+    // recipient) inside what Gmail accepts from a single client. Opening a
+    // fresh SMTP session per recipient -- and several of them at a time --
+    // is what provokes Gmail's "421/454, try again later" throttling, after
+    // which mail stops being accepted for the whole account and recipients
+    // simply stop hearing about new memos. Reuse also skips a TLS handshake
+    // per message, so a large class is notified much faster.
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 50,
   });
 }
 
 /**
  * Some ISPs/firewalls/antivirus products intermittently swallow SMTP traffic
  * after the TCP handshake (nodemailer then reports "Greeting never received"
- * or drops the socket mid-session). Retrying the same send a few seconds
- * later usually succeeds, because the blocking is transient rather than
- * absolute. Auth failures and mailbox-level rejections are permanent and are
- * NOT retried — retrying those just burns time and risks lockouts.
+ * or drops the socket mid-session). Mail hosts also throttle bursty senders:
+ * Gmail answers with 4xx replies such as "421 4.7.0 Try again later" or
+ * "454 4.7.0 Too many login attempts". All of these are temporary, so the send
+ * is retried after a delay with a fresh attempt. Auth failures and mailbox-level
+ * rejections are permanent and are NOT retried — retrying those just burns time
+ * and risks lockouts.
  */
 const RETRY_DELAYS_MS = [3000, 8000, 15000];
+// Throttle replies need a much longer cool-down than a dropped connection:
+// retrying a 421/454 too soon is itself what keeps the throttle in place.
+const THROTTLE_DELAYS_MS = [15000, 45000, 90000];
+
+/** The SMTP server answered with a temporary (4xx) reply, e.g. a throttle. */
+function isThrottleError(err) {
+  const message = String((err && err.response) || (err && err.message) || '');
+  return /^(421|450|451|452|454)\b/.test(message.trim()) || /try again later|too many|rate limit|throttl|temporar/i.test(message);
+}
+
 function isTransientError(err) {
   const message = String(err && err.message || '');
+  const response = String(err && err.response || '');
   const code = String(err && err.code || '');
   if (code === 'EAUTH') return false; // bad/revoked credentials — retrying cannot help
-  if (/^5\d\d/.test(message)) return false; // permanent SMTP rejection (bad mailbox, spam block)
+  if (/^5\d\d/.test(message) || /^5\d\d/.test(response.trim())) return false; // permanent SMTP rejection (bad mailbox, spam block, daily limit)
+  if (isThrottleError(err)) return true; // 4xx throttle — wait, then retry
   return (
     /Greeting never received|Connection closed|Connection timeout|timeout/i.test(message) ||
     ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNCLOSED', 'EDNS'].includes(code)
@@ -83,20 +107,28 @@ function htmlToText(html) {
 }
 
 /**
- * Sends an email, or, if SMTP is not configured, logs it to the console so
- * development/testing can proceed without real credentials.
- * Every message is sent as multipart/alternative (HTML + auto-generated plain
- * text) with a Reply-To, which materially improves inbox placement.
+ * Sends an email. If SMTP is not configured, the message is logged to the
+ * console for development/testing -- but the result says so explicitly
+ * (`skipped: true`) so the caller never records a message that was never
+ * handed to a mail server as a successful delivery. Every message is sent as
+ * multipart/alternative (HTML + auto-generated plain text) with a Reply-To,
+ * which materially improves inbox placement.
  */
 async function sendEmail({ to, subject, html }) {
   const text = htmlToText(html);
   if (!isConfigured) {
-    console.log('\n--- [DEV EMAIL - SMTP NOT CONFIGURED] ---');
+    console.log('\n--- [DEV EMAIL - SMTP NOT CONFIGURED, NOT ACTUALLY SENT] ---');
     console.log('To:', to);
     console.log('Subject:', subject);
     console.log('Body (text preview):', text);
-    console.log('------------------------------------------\n');
-    return { ok: true, dev: true };
+    console.log('-----------------------------------------------------------\n');
+    if (process.env.NODE_ENV === 'production') {
+      console.error(
+        'ERROR: SMTP is not configured on this deployment, so NO memo email can be delivered. ' +
+        'Set SMTP_HOST/SMTP_USER/SMTP_PASSWORD/SMTP_FROM_EMAIL in the environment.'
+      );
+    }
+    return { ok: false, skipped: true, error: 'SMTP is not configured on the server — nothing was sent.' };
   }
 
   const mailOptions = {
@@ -111,22 +143,32 @@ async function sendEmail({ to, subject, html }) {
     headers: { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'OOF, DR, RN, NRN, AutoReply' },
   };
 
-  // Attempt the send, retrying transient network failures with a growing
-  // delay. Every attempt gets a fresh SMTP connection, which is exactly what
-  // defeats the "connection opens but the greeting is swallowed" pattern.
+  // Attempt the send, retrying temporary failures (dropped connections and
+  // server-side throttling) with a growing delay. The delay used depends on
+  // what went wrong: a lost connection is retried quickly, while a 4xx
+  // throttle is given a long cool-down before the message is offered again.
   let lastErr = null;
-  for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
+  let attempt = 0;
+  for (;;) {
+    attempt++;
     try {
       await transporter.sendMail(mailOptions);
       if (attempt > 1) console.log(`Email send succeeded on attempt ${attempt} for ${to}.`);
       return { ok: true };
     } catch (err) {
       lastErr = err;
-      const isLast = attempt > RETRY_DELAYS_MS.length;
       console.error(`Email send attempt ${attempt} failed for ${to}: ${err.message}`);
-      if (isLast || !isTransientError(err)) break;
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAYS_MS[attempt - 1]));
-      console.log(`Retrying email send to ${to} (attempt ${attempt + 1})...`);
+
+      if (!isTransientError(err)) break; // permanent: bad credentials, unknown mailbox, spam block
+      const throttled = isThrottleError(err);
+      const delays = throttled ? THROTTLE_DELAYS_MS : RETRY_DELAYS_MS;
+      if (attempt > delays.length) break;
+      const waitMs = delays[attempt - 1];
+      console.log(
+        `Retrying email to ${to} in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1})` +
+        (throttled ? ' — the mail server is throttling, backing off.' : '...')
+      );
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   }
   return { ok: false, error: lastErr ? lastErr.message : 'Unknown SMTP error' };

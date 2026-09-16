@@ -120,6 +120,19 @@ const App = (() => {
         } catch (e) { window.location.href = fallback; }
       });
     }
+
+    // Self-healing web push. A device that has already been subscribed keeps
+    // working in the browser, but the server only knows about it while its
+    // push_subscriptions row exists -- and that row disappears whenever the
+    // server is redeployed/restored with a fresh or restored database, or the
+    // endpoint is pruned. Push then stops for that user while the UI still
+    // shows notifications as enabled, which is exactly the "no more web push
+    // notifications" symptom. Handing the existing subscription back on every
+    // page load repairs that automatically, with no prompt and no user action.
+    if (typeof PushClient !== 'undefined' && typeof PushClient.syncSubscription === 'function'
+        && (user.role === 'student' || user.role === 'staff')) {
+      PushClient.syncSubscription();
+    }
   }
 
   /**
@@ -134,6 +147,10 @@ const App = (() => {
     const content = document.getElementById('page-content');
     if (!content) return;
     try {
+      // Hand any existing browser subscription to the server first, so the
+      // banner is only shown to a device that genuinely has no subscription
+      // (rather than to a device whose server-side row was lost).
+      if (typeof PushClient.syncSubscription === 'function') await PushClient.syncSubscription();
       const { account } = await Api.get('/api/profile');
       if (!account.pushEnabled || account.pushSubscribed) return;
 

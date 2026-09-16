@@ -318,6 +318,28 @@ non-teaching staff, that memos targeted at them still arrive once approved, and
 that approved teaching staff can create and publish memos. No seed data or
 already-running server is required.
 
+`npm run check:notifications` does the same for notification delivery, on port 3213:
+it publishes an institution-wide memo to two throwaway students — one of them
+subscribed to a push endpoint that cannot be reached — and asserts that both
+recipients get an in-app notification and a delivery record for the memo (so one
+dead device can never silence the rest), that an email which was never handed to a
+mail server is logged as `skipped` rather than `sent`, that the failed push carries
+its reason, and that the unreachable device's subscription is kept.
+
+When staff or students report that they did **not** get the memo email or push
+alert, run the diagnostics against the same database/environment the app uses:
+
+```bash
+npm run diag:delivery                                   # what was actually delivered
+node test-smtp-send.js you@example.com                  # real SMTP send + server reply
+npm run test:push                                       # real push to the stored device
+```
+
+`diag:delivery` prints the delivery tables (recipients, email rows with their
+errors, push rows with their reasons), confirms the VAPID public/private key pair
+actually matches, and checks that the SMTP credentials are accepted — which is
+enough to tell "the server never sent it" apart from "the mailbox filtered it".
+
 ## 15. Troubleshooting
 
 **`npm install` fails with node-gyp / MSBuild / Visual Studio / Python errors**
@@ -337,6 +359,39 @@ and run `npm start` there, then open `http://localhost:3000` in a browser.
 
 **`EADDRINUSE` on startup**: something else is already using port 3000.
 Change `PORT` in `.env` or stop the other process.
+
+**"Students and staff say the memo email never arrived"**: check the delivery
+report first — `npm run diag:delivery` (or Admin ▸ Reports, which shows sent /
+failed / skipped counts). Mail that was never handed to a mail server is now
+recorded as `skipped` instead of `sent`, so the report cannot look healthy while
+nothing is going out. Then, in order of likelihood:
+
+1. `SMTP (email) configured: NO` in the startup banner or `emailConfigured: false`
+   in the report → the deployment is missing `SMTP_HOST` / `SMTP_USER` /
+   `SMTP_PASSWORD` / `SMTP_FROM_EMAIL`. Until they are set, nothing is sent.
+2. Rows with `failed` and a 4xx/5xx reason → read the reason. `421/454 … try again
+   later` is Gmail throttling and is now retried automatically with a backing-off
+   delay; `535 … authentication` means the Gmail App Password was revoked (make a
+   new one — the 16-character key, no spaces); `550 5.4.5 Daily user sending limit
+   exceeded` means a normal Gmail account's daily cap was reached, which a
+   whole-institution memo can hit instantly — use a transactional provider
+   (Brevo/SendGrid/Mailgun/Resend) for real bulk sending.
+3. Everything says `sent` but the inbox is empty → check the recipient's **Spam**
+   folder and mark one message "not spam". Memo mail is sent from a Gmail address
+   with a green button, which some filters treat as bulk mail.
+
+**"Web push notifications stopped arriving"**: the server only knows about a
+device while a row for it exists in `push_subscriptions`, and that table is lost
+whenever the host redeploys/replaces the database (which is what `Persistent
+storage detected: NO` in the startup banner warns about — on a host with an
+ephemeral disk, set `DATABASE_PATH` to a mounted volume/disk). The web client now
+re-registers each device automatically on every page load, so push recovers by
+itself once the app is reloaded; users can also re-enable it from Settings ▸ Web
+push notifications. Use `npm run test:push` to send a live push to every stored
+device and see exactly what the push service (FCM) replies — a `403` means the
+VAPID key pair changed after the device subscribed (the subscription is kept, not
+deleted), and `404/410` means the endpoint itself is gone and the user must
+re-enable push on that device.
 
 
 ---

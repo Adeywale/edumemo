@@ -100,5 +100,38 @@ const PushClient = (() => {
     }
   }
 
-  return { registerServiceWorker, isSupported, unsupportedReason, enable, disable };
+  /**
+   * Re-registers an already-working device with the server, without asking the
+   * user for anything. The browser keeps its PushManager subscription across
+   * sign-outs, server redeploys/database restores and service-worker updates,
+   * but the server only knows about a device while a matching
+   * push_subscriptions row exists. Whenever that row is lost (host redeploy or
+   * database restore, a pruned endpoint, a replacement server instance) push
+   * silently stops for that user while the UI still shows notifications as
+   * "on" -- so every page load hands the existing subscription back. It is an
+   * idempotent upsert, so repeat calls are harmless.
+   *
+   * Turning web push OFF removes the browser subscription as well (see
+   * disable()), so a user who opted out on this device has nothing left to
+   * sync and is never silently re-enabled.
+   *
+   * Returns true when the server now has this device registered.
+   */
+  async function syncSubscription() {
+    try {
+      if (!(await isSupported())) return false;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) return false;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) return false;
+      await Api.post('/api/notifications/push/subscribe', sub.toJSON());
+      return true;
+    } catch (e) {
+      console.warn('Push subscription sync failed', e);
+      return false;
+    }
+  }
+
+  return { registerServiceWorker, isSupported, unsupportedReason, enable, disable, syncSubscription };
 })();

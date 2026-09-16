@@ -4,13 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memo · EduMemo</title>
-<link rel="stylesheet" href="/css/styles.css">
-<link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
 <script src="/js/api.js"></script>
 <script src="/js/app.js"></script>
-<script src="/js/push.js"></script>
 <script>
 (async () => {
   const user = await App.requireAuth(['student', 'staff', 'administrator']);

@@ -73,13 +73,12 @@ async function notifyMemoRecipients(memo, baseUrl, options = {}) {
         // registration but never completed the browser subscription are simply
         // not attempted -- no bogus "failed" rows in their notification history.
         if (r.subscription_count > 0) {
-                              const result = await pushService.sendPushToUser(r.id, {
+                                                  const result = await pushService.sendPushToUser(r.id, {
             title: memo.title,
             body: `A new memo has been published.`,
             url: memoUrl,
-            memoId: memo.id,
           });
-          if (result.skipped) {
+if (result.skipped) {
             pushRecord = ['skipped', result.reason || 'Push not configured on server'];
           } else if (result.sent > 0) {
             pushSent = true;

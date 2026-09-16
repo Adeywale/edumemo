@@ -3,7 +3,6 @@ const fs = require('fs');
 const db = require('../database/db');
 const { logAction } = require('../utils/audit');
 const emailService = require('../services/emailService');
-const pushService = require('../services/pushService');
 const { UPLOAD_DIR } = require('../middleware/upload');
 
 // ---------------- DASHBOARD OVERVIEW ----------------
@@ -365,10 +364,9 @@ function listAuditLogs(req, res) {
 function getSettings(req, res) {
   const rows = db.prepare(`SELECT key, value FROM system_settings`).all();
   const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
-    res.json({
+  res.json({
     settings,
     emailConfigured: emailService.isConfigured,
-    pushConfigured: pushService.isConfigured,
     institutionName: process.env.INSTITUTION_NAME || 'EduMemo',
   });
 }

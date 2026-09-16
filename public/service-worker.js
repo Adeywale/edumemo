@@ -15,15 +15,10 @@ self.addEventListener('push', (event) => {
   try { payload = event.data.json(); } catch (e) { payload = { title: 'New Memo', body: event.data.text() }; }
 
   const title = payload.title || 'New Memo';
-  // A `tag` collapses notifications for the same memo so the user never sees
-  // duplicates when a memo is re-published or resent. `memoId` makes the tag
-  // unique per memo rather than per delivery attempt.
-  const memoId = payload.memoId || payload.url || title;
   const options = {
     body: payload.body || 'A new memo has been published.',
-    icon: '/images/icon-192.png',
-    badge: '/images/icon-192.png',
-    tag: `memo-${memoId}`,
+    icon: '/images/logo.png',
+    badge: '/images/logo.png',
     data: { url: payload.url || '/' },
   };
 
